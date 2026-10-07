@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const S = "/home/user/deneme/test-results";
+// Ekran görüntüleri inceleme için; CI hata durumunda bunları yükler.
+const S = "test-results/ekran";
 
 async function open(page: Page) {
   const errors: string[] = [];
