@@ -33,6 +33,18 @@ export interface Feature {
   sketch?: string;
   /** Döndürme ekseni: eskizin dikey (V) ya da yatay (U) ekseni. */
   axis?: RevolveAxis;
+  /** Ekstrüzyon / döndürme sonucu yeni gövde mi, yoksa `target` gövdeyle birleşim / kesme / kesişim mi? */
+  operation?: BodyOperation;
+  /** Birleştir / Kes / Kesiştir işlemlerinin uygulandığı gövde (tüketilir). */
+  target?: string;
+  /** Ekstrüzyon yönü: tek taraf ya da düzlemin iki yanına simetrik. */
+  direction?: ExtrudeDirection;
+  /** Ayna / desen / ölçek: kopyalanan ya da değiştirilen gövde (tüketilir). */
+  source?: string;
+  /** Dairesel desenin döndüğü dünya ekseni. Ayna düzlemi `plane` alanındadır. */
+  worldAxis?: WorldAxis;
+  /** Sadece 3D görünümde gizlenir; hesaplama ve dışa aktarma etkilenmez. */
+  hidden?: boolean;
   /** Eklenti özellikleri için son üretilen tarif (eklenti yüklü olmasa da dosya açılabilsin diye saklanır). */
   solid?: Solid;
 }
@@ -47,29 +59,81 @@ export interface PrimitiveDef {
 }
 
 export type RevolveAxis = "U" | "V";
+export type WorldAxis = "X" | "Y" | "Z";
+export type BodyOperation = "new" | "join" | "cut" | "intersect";
+export type ExtrudeDirection = "one" | "symmetric";
 
 export const AXIS_LABELS: Record<RevolveAxis, string> = {
   V: "Dikey eksen (V)",
   U: "Yatay eksen (U)",
 };
 
-/** Eskiz tabanlı özelliklerin türleri ve görünen adları. */
-export const SKETCH_FEATURE_LABELS = {
+export const WORLD_AXIS_LABELS: Record<WorldAxis, string> = { X: "X ekseni", Y: "Y ekseni", Z: "Z ekseni" };
+
+export const OPERATION_LABELS: Record<BodyOperation, string> = {
+  new: "Yeni gövde",
+  join: "Birleştir",
+  cut: "Kes",
+  intersect: "Kesiştir",
+};
+
+export const DIRECTION_LABELS: Record<ExtrudeDirection, string> = {
+  one: "Tek yön",
+  symmetric: "Simetrik (iki yana)",
+};
+
+const OPERATION_TO_BOOLEAN: Record<Exclude<BodyOperation, "new">, BooleanOp> = {
+  join: "union",
+  cut: "subtract",
+  intersect: "intersect",
+};
+
+/** Yerleşik özelliklerin türleri ve görünen adları. */
+export const FEATURE_LABELS = {
   sketch: "Eskiz",
   extrude: "Ekstrüzyon",
   revolve: "Döndürme",
+  mirror: "Ayna",
+  linearPattern: "Dikdörtgensel Desen",
+  circularPattern: "Dairesel Desen",
+  scale: "Ölçek",
 } as const;
+
+export type BuiltinFeatureType = keyof typeof FEATURE_LABELS;
+
+/** Bir gövdeyi girdi alan (kopyalayan / değiştiren) özellikler. */
+export const BODY_FEATURES = ["mirror", "linearPattern", "circularPattern", "scale"] as const;
+export type BodyFeatureType = (typeof BODY_FEATURES)[number];
 
 /** Yerleşik (şekil olmayan) özelliklerin düzenlenebilir parametreleri. */
 export const FEATURE_PARAMS: Record<string, Record<string, ParamSpec>> = {
   sketch: { offset: { label: "Düzlem ofseti", default: 0, step: 1 } },
   extrude: { distance: { label: "Mesafe (− ters yön)", default: 10, step: 1 } },
   revolve: { angle: { label: "Açı (°)", default: 360, min: 0.1, max: 360, step: 15 } },
+  mirror: {},
+  linearPattern: {
+    countX: { label: "X adedi", default: 3, min: 1, max: 100, step: 1, integer: true },
+    spacingX: { label: "X aralığı", default: 30, step: 1 },
+    countY: { label: "Y adedi", default: 1, min: 1, max: 100, step: 1, integer: true },
+    spacingY: { label: "Y aralığı", default: 30, step: 1 },
+    countZ: { label: "Z adedi", default: 1, min: 1, max: 100, step: 1, integer: true },
+    spacingZ: { label: "Z aralığı", default: 30, step: 1 },
+  },
+  circularPattern: {
+    count: { label: "Adet", default: 6, min: 1, max: 360, step: 1, integer: true },
+    angle: { label: "Toplam açı (°)", default: 360, min: 0.1, max: 360, step: 15 },
+  },
+  scale: { factor: { label: "Ölçek oranı", default: 2, min: 0.001, max: 1000, step: 0.1 } },
 };
 
 /** Bu özelliğin girdi olarak kullandığı (tükettiği) diğer özellikler. */
 export function featureRefs(f: Feature): string[] {
-  return [...(f.operands ?? []), ...(f.sketch ? [f.sketch] : [])];
+  return [
+    ...(f.operands ?? []),
+    ...(f.sketch ? [f.sketch] : []),
+    ...(f.target ? [f.target] : []),
+    ...(f.source ? [f.source] : []),
+  ];
 }
 
 /** Katı üretmeyen özellikler (sahneye çizgi olarak çizilir). */
@@ -189,6 +253,16 @@ export function featureSolid(
       throw new Error(`${feature.name}: eskiz bir katı değildir; önce Ekstrüzyon ya da Döndürme uygulayın`);
     } else if (feature.type === "extrude" || feature.type === "revolve") {
       base = sketchFeatureSolid(feature, byId);
+      const op = feature.operation ?? "new";
+      if (op !== "new") {
+        const target = feature.target ? byId.get(feature.target) : undefined;
+        if (!target) throw new Error(`${feature.name}: ${OPERATION_LABELS[op]} için hedef gövde seçin`);
+        base = { kind: "boolean", op: OPERATION_TO_BOOLEAN[op], children: [featureSolid(target, byId, registry, visiting), base] };
+      }
+    } else if ((BODY_FEATURES as readonly string[]).includes(feature.type)) {
+      const source = feature.source ? byId.get(feature.source) : undefined;
+      if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
+      base = bodyFeatureSolid(feature, featureSolid(source, byId, registry, visiting));
     } else if (feature.type === "boolean") {
       if (!feature.op || !feature.operands) throw new Error(`${feature.name}: eksik boolean bilgisi`);
       const children = feature.operands.map((id) => {
@@ -227,6 +301,53 @@ function profilesOf(feature: Feature, byId: Map<string, Feature>): { sketch: Fea
 const REVOLVE_V_TO_LOCAL = [1, 0, 0, 0, 0, 0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1];
 const REVOLVE_U_TO_LOCAL = [0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1];
 
+const MIRROR_MATRICES: Record<PlaneName, number[]> = {
+  XY: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1],
+  XZ: [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+  YZ: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+};
+
+/** Ayna, desen ve ölçek: kaynak gövdenin dönüştürülmüş kopyaları. */
+function bodyFeatureSolid(feature: Feature, child: Solid): Solid {
+  const p = feature.params;
+  const union = (children: Solid[]): Solid => (children.length === 1 ? children[0] : { kind: "boolean", op: "union", children });
+  switch (feature.type as BodyFeatureType) {
+    case "mirror":
+      return union([child, { kind: "transform", matrix: MIRROR_MATRICES[feature.plane ?? "YZ"], child }]);
+    case "scale": {
+      const f = p.factor ?? 1;
+      if (!(f > 0)) throw new Error(`${feature.name}: ölçek oranı pozitif olmalı`);
+      return { kind: "transform", matrix: [f, 0, 0, 0, 0, f, 0, 0, 0, 0, f, 0, 0, 0, 0, 1], child };
+    }
+    case "linearPattern": {
+      const copies: Solid[] = [];
+      const [nx, ny, nz] = [p.countX ?? 1, p.countY ?? 1, p.countZ ?? 1].map((n) => Math.max(1, Math.round(n)));
+      if (nx * ny * nz > 1000) throw new Error(`${feature.name}: en fazla 1000 kopya`);
+      for (let i = 0; i < nx; i++)
+        for (let j = 0; j < ny; j++)
+          for (let k = 0; k < nz; k++) {
+            const t: Vec3 = [i * (p.spacingX ?? 0), j * (p.spacingY ?? 0), k * (p.spacingZ ?? 0)];
+            copies.push(i + j + k === 0 ? child : { kind: "transform", translate: t, child });
+          }
+      return union(copies);
+    }
+    case "circularPattern": {
+      const n = Math.max(1, Math.round(p.count ?? 1));
+      const total = p.angle ?? 360;
+      // Tam turda son kopya ilkinin üstüne gelmesin; kısmi açıda iki uç da dolu.
+      const step = total >= 360 ? 360 / n : n > 1 ? total / (n - 1) : 0;
+      const axis = feature.worldAxis ?? "Z";
+      const copies: Solid[] = [];
+      for (let i = 0; i < n; i++) {
+        const a = step * i;
+        const rotate: Vec3 = [axis === "X" ? a : 0, axis === "Y" ? a : 0, axis === "Z" ? a : 0];
+        copies.push(i === 0 ? child : { kind: "transform", rotate, child });
+      }
+      return union(copies);
+    }
+  }
+}
+
 /** Eskizden ekstrüzyon / döndürme katısı. Eskiz içinde iç içe şekiller delik açar. */
 function sketchFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid {
   const { sketch, profiles } = profilesOf(feature, byId);
@@ -237,7 +358,8 @@ function sketchFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid
     const distance = feature.params.distance ?? 10;
     if (!Number.isFinite(distance) || distance === 0) throw new Error(`${feature.name}: mesafe sıfır olamaz`);
     local = { kind: "extrude", polygons: profiles, height: Math.abs(distance), fillRule: "EvenOdd" };
-    if (distance < 0) local = { kind: "transform", translate: [0, 0, distance], child: local };
+    const shift = feature.direction === "symmetric" ? -Math.abs(distance) / 2 : Math.min(0, distance);
+    if (shift !== 0) local = { kind: "transform", translate: [0, 0, shift], child: local };
   } else {
     const axis = feature.axis ?? "V";
     // Manifold Y ekseni etrafında döndürür; U ekseni için profilin eksenleri yer değiştirir.

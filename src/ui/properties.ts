@@ -1,5 +1,18 @@
 import { errorText, type SugarApp } from "../app/controller";
-import { AXIS_LABELS, BOOLEAN_LABELS, SKETCH_FEATURE_LABELS, type Feature, type ParamSpec, type RevolveAxis } from "../core/features";
+import {
+  AXIS_LABELS,
+  BOOLEAN_LABELS,
+  DIRECTION_LABELS,
+  FEATURE_LABELS,
+  OPERATION_LABELS,
+  WORLD_AXIS_LABELS,
+  type BodyOperation,
+  type ExtrudeDirection,
+  type Feature,
+  type ParamSpec,
+  type RevolveAxis,
+  type WorldAxis,
+} from "../core/features";
 import { PLANES, describeSketch, type PlaneName } from "../core/sketch";
 import type { BooleanOp, Vec3 } from "../core/solid";
 import { formatNumber, h } from "./dom";
@@ -13,7 +26,7 @@ export class PropertiesPanel {
   readonly element: HTMLElement;
   private body: HTMLElement;
   /** Şu an gösterilen özellik ve türü; değişmediyse panel yeniden kurulmaz, sadece değerler tazelenir. */
-  private shown: { id: string; type: string; op?: string } | null = null;
+  private shown: { id: string; type: string; key: string } | null = null;
   private inputs = new Map<string, HTMLInputElement | HTMLSelectElement>();
 
   constructor(
@@ -21,7 +34,7 @@ export class PropertiesPanel {
     private readonly sketcher: Sketcher,
   ) {
     this.body = h("div");
-    this.element = h("section", {}, h("div", { class: "panel-title" }, "Özellikler"), this.body);
+    this.element = h("div", { class: "properties" }, this.body);
     app.document.onDidChangeSelection.on(() => this.render());
     app.document.onDidChange.on(() => this.render());
     app.onDidChangeMeshes.on(() => this.render());
@@ -41,7 +54,7 @@ export class PropertiesPanel {
     const sel = doc.getSelection();
     if (sel.length === 1) {
       const f = doc.get(sel[0])!;
-      if (this.shown?.id === f.id && this.shown.type === f.type && this.shown.op === f.op) {
+      if (this.shown?.id === f.id && this.shown.type === f.type && this.shown.key === this.shapeKey(f)) {
         this.refreshValues(f);
         return;
       }
@@ -87,8 +100,14 @@ export class PropertiesPanel {
     );
   }
 
+  /** Formun yapısını değiştiren alanlar (değişince form yeniden kurulur). */
+  private shapeKey(f: Feature): string {
+    const candidates = f.operation && f.operation !== "new" ? this.app.targetCandidates(f.id).map((c) => `${c.id}:${c.name}`).join() : "";
+    return [f.op, f.operation, f.target, candidates].join("|");
+  }
+
   private renderFeature(f: Feature): void {
-    this.shown = { id: f.id, type: f.type, op: f.op };
+    this.shown = { id: f.id, type: f.type, key: this.shapeKey(f) };
     this.inputs.clear();
     const app = this.app;
     const def = app.primitives.get(f.type);
@@ -102,7 +121,7 @@ export class PropertiesPanel {
     this.inputs.set("name", nameInput);
     form.append(this.field("Ad", nameInput));
 
-    const sketchLabel = SKETCH_FEATURE_LABELS[f.type as keyof typeof SKETCH_FEATURE_LABELS];
+    const sketchLabel = FEATURE_LABELS[f.type as keyof typeof FEATURE_LABELS];
     const typeLabel =
       f.type === "boolean"
         ? `Boolean · ${BOOLEAN_LABELS[f.op!]}`
@@ -130,9 +149,29 @@ export class PropertiesPanel {
       if (f.type === "extrude" || f.type === "revolve") {
         const sketch = f.sketch ? app.document.get(f.sketch) : undefined;
         form.append(h("div", { class: "meta" }, `Eskiz: ${sketch?.name ?? "—"}`));
+        this.operationFields(form, f);
+      }
+      if (f.type === "extrude") {
+        form.append(
+          this.selectField("direction", "Yön", DIRECTION_LABELS, f.direction ?? "one", (v) =>
+            this.apply(f.id, { direction: v === "one" ? undefined : (v as ExtrudeDirection) }),
+          ),
+        );
       }
       if (f.type === "revolve") this.axisField(form, f);
-      form.append(h("h3", {}, "Parametreler"));
+      if (f.source) {
+        form.append(h("div", { class: "meta" }, `Kaynak gövde: ${app.document.get(f.source)?.name ?? "—"}`));
+      }
+      if (f.type === "mirror") {
+        const planes = Object.fromEntries((Object.keys(PLANES) as PlaneName[]).map((p) => [p, PLANES[p].label]));
+        form.append(this.selectField("plane", "Ayna düzlemi", planes, f.plane ?? "YZ", (v) => this.apply(f.id, { plane: v as PlaneName })));
+      }
+      if (f.type === "circularPattern") {
+        form.append(
+          this.selectField("worldAxis", "Eksen", WORLD_AXIS_LABELS, f.worldAxis ?? "Z", (v) => this.apply(f.id, { worldAxis: v as WorldAxis })),
+        );
+      }
+      if (Object.keys(app.paramSpecs(f.type)!).length) form.append(h("h3", {}, "Parametreler"));
       for (const [name, spec] of Object.entries(app.paramSpecs(f.type)!)) {
         const input = this.numberInput(spec, f.params[name] ?? spec.default, `${spec.label}`);
         input.dataset.param = name;
@@ -189,6 +228,36 @@ export class PropertiesPanel {
     form.append(h("div", { class: "meta", dataset: { sketchdesc: "" } }, describeSketch(f.entities ?? [])));
   }
 
+  /** Yeni gövde / Birleştir / Kes / Kesiştir ve hedef gövde. */
+  private operationFields(form: HTMLElement, f: Feature): void {
+    const op = f.operation ?? "new";
+    form.append(
+      this.selectField("operation", "İşlem", OPERATION_LABELS, op, (v) => {
+        this.app.setOperation(f.id, v as BodyOperation).catch((e) => this.app.showMessage(errorText(e), "error"));
+      }),
+    );
+    if (op === "new") return;
+    const candidates = this.app.targetCandidates(f.id);
+    if (!candidates.length) {
+      form.append(h("div", { class: "meta" }, "Hedef olabilecek gövde yok: önce başka bir gövde oluşturun."));
+      return;
+    }
+    const options: Record<string, string> = { "": "— seçin —" };
+    for (const c of candidates) options[c.id] = c.name;
+    form.append(this.selectField("target", "Hedef gövde", options, f.target ?? "", (v) => this.apply(f.id, { target: v || undefined })));
+  }
+
+  private selectField(key: string, label: string, options: Record<string, string>, value: string, onChange: (v: string) => void): HTMLElement {
+    const select = h(
+      "select",
+      { attrs: { "aria-label": label } },
+      ...Object.entries(options).map(([v, text]) => h("option", { value: v, selected: v === value }, text)),
+    );
+    select.addEventListener("change", () => onChange(select.value));
+    this.inputs.set(key, select);
+    return this.field(label, select);
+  }
+
   private axisField(form: HTMLElement, f: Feature): void {
     const select = h(
       "select",
@@ -222,6 +291,9 @@ export class PropertiesPanel {
     if (f.op) set("op", f.op);
     if (f.plane) set("plane", f.plane);
     if (f.type === "revolve") set("axis", f.axis ?? "V");
+    if (f.type === "extrude") set("direction", f.direction ?? "one");
+    if (f.type === "mirror") set("plane", f.plane ?? "YZ");
+    if (f.type === "circularPattern") set("worldAxis", f.worldAxis ?? "Z");
     const desc = this.body.querySelector<HTMLElement>("[data-sketchdesc]");
     if (desc) desc.textContent = describeSketch(f.entities ?? []);
     for (const [name, value] of Object.entries(f.params)) set(`param.${name}`, formatNumber(value));

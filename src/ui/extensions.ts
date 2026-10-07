@@ -17,7 +17,7 @@ export class ExtensionsPanel {
   private footer = h("div", { class: "form" });
 
   constructor(private readonly app: SugarApp) {
-    this.element = h("section", {}, h("div", { class: "panel-title" }, "Eklentiler"), this.list, this.footer);
+    this.element = h("div", { class: "extensions" }, this.list, this.footer);
     app.host.onDidChange.on(() => this.render());
     this.render();
     void this.renderFooter();

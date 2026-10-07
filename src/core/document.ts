@@ -122,20 +122,39 @@ export class SugarDocument {
       position: init.position ? [...init.position] : [0, 0, 0],
       rotation: init.rotation ? [...init.rotation] : [0, 0, 0],
     };
-    for (const id of featureRefs(feature)) {
-      const input = this.get(id);
-      if (!input) throw new Error(`Girdi bulunamadı: ${id}`);
-      if (this.parentOf(id)) throw new Error(`${input.name} zaten başka bir işlemde kullanılıyor`);
-      if (feature.operands && !isSolidFeature(input)) {
-        throw new Error(`${input.name} bir eskiz; boolean için önce Ekstrüzyon ya da Döndürme uygulayın`);
-      }
-      if (feature.sketch && input.type !== "sketch") throw new Error(`${input.name} bir eskiz değil`);
-    }
-    if (feature.operands && feature.operands[0] === feature.operands[1]) throw new Error("İki farklı şekil seçin");
+    this.validateRefs(feature);
     this.checkpoint();
     this.features.push(feature);
     this.changed();
     return feature;
+  }
+
+  /** `id` özelliği (doğrudan ya da dolaylı) `other`'ı girdi olarak kullanıyor mu? */
+  dependsOn(id: string, other: string, seen = new Set<string>()): boolean {
+    if (id === other) return true;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    const f = this.get(id);
+    return !!f && featureRefs(f).some((ref) => this.dependsOn(ref, other, seen));
+  }
+
+  /** Girdiler var mı, boşta mı, doğru türde mi ve döngü oluşturmuyor mu? */
+  private validateRefs(feature: Feature): void {
+    const refs = featureRefs(feature);
+    for (const id of refs) {
+      const input = this.get(id);
+      if (!input) throw new Error(`Girdi bulunamadı: ${id}`);
+      if (id === feature.id) throw new Error(`${input.name} kendisini girdi olarak kullanamaz`);
+      const parent = this.parentOf(id);
+      if (parent && parent.id !== feature.id) throw new Error(`${input.name} zaten başka bir işlemde kullanılıyor`);
+      if (this.dependsOn(id, feature.id)) throw new Error(`${input.name} bu özelliğe bağlı; döngü oluşur`);
+      if (id === feature.sketch) {
+        if (input.type !== "sketch") throw new Error(`${input.name} bir eskiz değil`);
+      } else if (!isSolidFeature(input)) {
+        throw new Error(`${input.name} bir eskiz; önce Ekstrüzyon ya da Döndürme uygulayın`);
+      }
+    }
+    if (new Set(refs).size !== refs.length) throw new Error("İki farklı şekil seçin");
   }
 
   /** İşlenenler kendi dönüşümlerini korur; sonuç özelliği sıfır dönüşümle başlar. */
@@ -146,8 +165,13 @@ export class SugarDocument {
   update(id: string, patch: FeaturePatch): void {
     const feature = this.get(id);
     if (!feature) throw new Error(`Özellik bulunamadı: ${id}`);
+    const next = { ...feature, ...clone(patch) };
+    // `target: undefined` gibi alanlar silinsin (JSON'da da görünmesin).
+    for (const key of Object.keys(next) as (keyof Feature)[]) if (next[key] === undefined) delete next[key];
+    if (featureRefs(next).join() !== featureRefs(feature).join()) this.validateRefs(next);
     this.checkpoint();
-    Object.assign(feature, clone(patch));
+    for (const key of Object.keys(feature) as (keyof Feature)[]) if (!(key in next)) delete feature[key];
+    Object.assign(feature, next);
     this.changed();
   }
 

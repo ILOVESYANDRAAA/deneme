@@ -3,10 +3,12 @@ import { CommandRegistry } from "../core/commands";
 import { SugarDocument, type FeaturePatch } from "../core/document";
 import { Emitter } from "../core/events";
 import {
+  BODY_FEATURES,
   BOOLEAN_LABELS,
+  FEATURE_LABELS,
   FEATURE_PARAMS,
   PrimitiveRegistry,
-  SKETCH_FEATURE_LABELS,
+  type BodyFeatureType,
   clampParam,
   defaultParams,
   featureRefs,
@@ -158,12 +160,12 @@ export class SugarApp implements HostServices {
 
   // ---- eskiz tabanlı modelleme ----
 
-  /** Seçilen başlangıç düzleminde boş bir eskiz açar. */
-  createSketch(plane: PlaneName): Feature {
+  /** Seçilen başlangıç düzleminde (isteğe bağlı ofsetle) boş bir eskiz açar. */
+  createSketch(plane: PlaneName, offset = 0): Feature {
     if (!(plane in PLANES)) throw new Error(`Bilinmeyen düzlem: ${plane}`);
     const feature = this.document.add(
-      { type: "sketch", plane, entities: [], params: { offset: 0 } },
-      SKETCH_FEATURE_LABELS.sketch,
+      { type: "sketch", plane, entities: [], params: { offset: Number.isFinite(offset) ? offset : 0 } },
+      FEATURE_LABELS.sketch,
     );
     this.document.setSelection([feature.id]);
     return feature;
@@ -174,7 +176,7 @@ export class SugarApp implements HostServices {
     const id = sketchId ?? this.pickSketch();
     if (!id) {
       this.showMessage(
-        `${SKETCH_FEATURE_LABELS[type]} için önce bir eskiz seçin (ya da Eskiz ile yeni bir tane çizin)`,
+        `${FEATURE_LABELS[type]} için önce bir eskiz seçin (ya da Eskiz ile yeni bir tane çizin)`,
         "warning",
       );
       return null;
@@ -186,10 +188,60 @@ export class SugarApp implements HostServices {
         params: Object.fromEntries(Object.entries(FEATURE_PARAMS[type]).map(([k, spec]) => [k, spec.default])),
         ...(type === "revolve" ? { axis: "V" as const } : {}),
       },
-      SKETCH_FEATURE_LABELS[type],
+      FEATURE_LABELS[type],
     );
     this.document.setSelection([feature.id]);
     return feature;
+  }
+
+  /** Seçili gövdeden ayna / desen / ölçek özelliği oluşturur. */
+  addBodyFeature(type: BodyFeatureType, sourceId?: string): Feature | null {
+    const sel = this.document.getSelection();
+    const id = sourceId ?? (sel.length === 1 ? sel[0] : undefined);
+    const source = id ? this.document.get(id) : undefined;
+    if (!source || !isSolidFeature(source) || this.document.parentOf(source.id)) {
+      this.showMessage(`${FEATURE_LABELS[type]} için önce bir gövde seçin`, "warning");
+      return null;
+    }
+    const feature = this.document.add(
+      {
+        type,
+        source: source.id,
+        params: Object.fromEntries(Object.entries(FEATURE_PARAMS[type]).map(([k, spec]) => [k, spec.default])),
+        ...(type === "mirror" ? { plane: "YZ" as const } : {}),
+        ...(type === "circularPattern" ? { worldAxis: "Z" as const } : {}),
+      },
+      FEATURE_LABELS[type],
+    );
+    this.document.setSelection([feature.id]);
+    return feature;
+  }
+
+  /** Birleştir / Kes / Kesiştir için hedef olabilecek gövdeler: boştaki, bu özelliğe bağlı olmayan katılar. */
+  targetCandidates(featureId: string): Feature[] {
+    const f = this.document.get(featureId);
+    return this.document
+      .roots()
+      .filter((r) => r.id !== featureId && isSolidFeature(r) && !this.document.dependsOn(r.id, featureId))
+      .concat(f?.target ? [this.document.get(f.target)!].filter(Boolean) : []);
+  }
+
+  /** İşlem türünü değiştirir; tek aday gövde varsa onu hedef seçer. */
+  async setOperation(featureId: string, operation: NonNullable<Feature["operation"]>): Promise<void> {
+    const f = this.document.get(featureId);
+    if (!f) return;
+    if (operation === "new") return this.updateFeature(featureId, { operation, target: undefined });
+    const candidates = this.targetCandidates(featureId);
+    const target = f.target ?? (candidates.length === 1 ? candidates[0].id : undefined);
+    await this.updateFeature(featureId, { operation, target });
+  }
+
+  /** Seçili özellikleri 3D görünümde gizler / gösterir. */
+  toggleVisibility(ids = this.document.getSelection()): void {
+    const features = ids.map((id) => this.document.get(id)).filter((f): f is Feature => !!f);
+    if (!features.length) return;
+    const hide = !features.every((f) => f.hidden);
+    for (const f of features) this.document.update(f.id, { hidden: hide ? true : undefined });
   }
 
   private pickSketch(): string | undefined {
@@ -340,7 +392,7 @@ export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-const BUILTIN_TYPES = new Set(["boolean", "sketch", "extrude", "revolve"]);
+const BUILTIN_TYPES = new Set(["boolean", ...Object.keys(FEATURE_LABELS)]);
 
 /** Eklentilerin katkıladığı şekiller için "Ekle" komutları. Yerleşik kutu/silindir/küre arayüzde gösterilmez. */
 function registerPrimitiveCommands(app: SugarApp): void {
@@ -385,6 +437,12 @@ function registerBuiltinCommands(app: SugarApp): void {
   );
   c.register({ id: "feature.revolve", title: "Döndürme", category: "Katı", keybinding: "Shift+R" }, () =>
     app.addSketchFeature("revolve"),
+  );
+  for (const type of BODY_FEATURES) {
+    c.register({ id: `feature.${type}`, title: FEATURE_LABELS[type], category: "Katı" }, () => app.addBodyFeature(type));
+  }
+  c.register({ id: "edit.toggleVisibility", title: "Göster / Gizle", category: "Düzen", keybinding: "V" }, () =>
+    app.toggleVisibility(),
   );
 
   const ops: [BooleanOp, string][] = [

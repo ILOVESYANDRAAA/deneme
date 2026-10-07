@@ -1,31 +1,106 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { SugarApp } from "../app/controller";
-import { PLANES, sketchSegments, toWorld, type PlaneName } from "../core/sketch";
-import type { Vec2 } from "../core/solid";
+import { Emitter } from "../core/events";
+import { PLANES, profileRegions, sketchProfiles, sketchSegments, toWorld, type PlaneName, type SketchEntity } from "../core/sketch";
+import type { Vec2, Vec3 } from "../core/solid";
 import type { MeshData } from "../geometry/evaluate";
 import { h } from "./dom";
 
-const COLOR_BODY = new THREE.Color("#8fa6c6");
-const COLOR_SELECTED = new THREE.Color("#f2a541");
-const COLOR_EDGE = new THREE.Color("#141821");
-const COLOR_SKETCH = new THREE.Color("#c9d3e6");
-const COLOR_SKETCH_SELECTED = new THREE.Color("#7fb0ff");
-const COLOR_SKETCH_ACTIVE = new THREE.Color("#f2a541");
-const COLOR_PREVIEW = new THREE.Color("#ffe1a8");
+export type Theme = "light" | "dark";
+
+/** Temaya göre 3D görünüm renkleri. */
+const THEMES = {
+  light: {
+    body: "#b4bfcb",
+    selected: "#2fa8e6",
+    edge: "#1b2128",
+    sketch: "#1d4f91",
+    sketchSelected: "#0696d7",
+    sketchActive: "#14427d",
+    entitySelected: "#00a2ff",
+    entityHover: "#e0811a",
+    construction: "#d07a1c",
+    profile: "#f0a24a",
+    preview: "#0696d7",
+    overlay: "#0aa564",
+    cap: "#d9433b",
+    gridMain: 0x9aa4ae,
+    gridMinor: 0xc5ccd3,
+    sketchGridMain: 0x8a95a1,
+    sketchGridMinor: 0xbcc4cc,
+  },
+  dark: {
+    body: "#8fa6c6",
+    selected: "#f2a541",
+    edge: "#141821",
+    sketch: "#c9d3e6",
+    sketchSelected: "#7fb0ff",
+    sketchActive: "#f2a541",
+    entitySelected: "#4fa8ff",
+    entityHover: "#ffe1a8",
+    construction: "#c98a3a",
+    profile: "#f2a541",
+    preview: "#ffe1a8",
+    overlay: "#4fe0a0",
+    cap: "#d9534f",
+    gridMain: 0x555a66,
+    gridMinor: 0x34363e,
+    sketchGridMain: 0x6a7080,
+    sketchGridMinor: 0x3c3f4a,
+  },
+};
+
+type Palette = (typeof THEMES)["light"];
 const PLANE_COLORS: Record<PlaneName, number> = { XY: 0x4a7dff, XZ: 0x3fbf6f, YZ: 0xff5a5a };
 const EDGE_ANGLE = 30;
 
 interface Item {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
-  edges: THREE.LineSegments;
+  edges: THREE.LineSegments<THREE.EdgesGeometry, THREE.LineBasicMaterial>;
+  /** Kesit analizinde kesilen yüzü dolu gösteren arka yüz kapağı. */
+  cap: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
 }
 
-export type ViewName = "iso" | "top" | "front" | "right";
+export type ViewName = "iso" | "top" | "bottom" | "front" | "back" | "right" | "left";
+export type VisualStyle = "shaded" | "shadedEdges" | "wireframe";
+
+export const VIEW_LABELS: Record<ViewName, string> = {
+  iso: "İzometrik",
+  top: "Üst",
+  bottom: "Alt",
+  front: "Ön",
+  back: "Arka",
+  right: "Sağ",
+  left: "Sol",
+};
+
+export const STYLE_LABELS: Record<VisualStyle, string> = {
+  shaded: "Gölgeli",
+  shadedEdges: "Gölgeli + Kenarlar",
+  wireframe: "Tel Kafes",
+};
+
+const VIEW_DIRS: Record<ViewName, Vec3> = {
+  iso: [0.55, -0.8, 0.6],
+  top: [0, -0.0001, 1],
+  bottom: [0, -0.0001, -1],
+  front: [0, -1, 0],
+  back: [0, 1, 0],
+  right: [1, 0, 0],
+  left: [-1, 0, 0],
+};
 
 const PLANE_VIEWS: Record<PlaneName, ViewName> = { XY: "top", XZ: "front", YZ: "right" };
 
-/** Eskiz modu gibi araçların görünümdeki fare olaylarını devralması için. */
+export interface SectionSettings {
+  plane: PlaneName;
+  offset: number;
+  /** Ters taraf görünsün. */
+  flip: boolean;
+}
+
+/** Eskiz modu ve ölçüm gibi araçların görünümdeki fare olaylarını devralması için. */
 export interface PointerHandler {
   pointerMove(e: PointerEvent): void;
   click(e: PointerEvent): void;
@@ -41,18 +116,24 @@ export class Viewport {
   readonly element: HTMLElement;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera: THREE.PerspectiveCamera;
+  readonly camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
   private items = new Map<string, Item>();
   private renderQueued = false;
   private hint: HTMLElement;
   private raycaster = new THREE.Raycaster();
-  private edgeMaterial = new THREE.LineBasicMaterial({ color: COLOR_EDGE });
+  private theme: Theme = "light";
+  private c: Palette = THEMES.light;
+  private edgeMaterial = new THREE.LineBasicMaterial({ color: this.c.edge });
+  private ground = new THREE.Group();
 
   private sketchGroup = new THREE.Group();
   private sketchGrid: THREE.GridHelper;
   private preview: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+  private overlay = new THREE.Group();
   private activeSketch: string | null = null;
+  private sketchOptions = { grid: true, profiles: true };
+  private highlight: { selected: Set<number>; hovered: number } = { selected: new Set(), hovered: -1 };
   private interaction: PointerHandler | null = null;
   private planePicker: {
     group: THREE.Group;
@@ -60,6 +141,15 @@ export class Viewport {
     hovered: PlaneName | null;
     resolve: (plane: PlaneName | null) => void;
   } | null = null;
+  private style: VisualStyle = "shadedEdges";
+  private gridVisible = true;
+  private clipPlane: THREE.Plane | null = null;
+  private sectionSettings: SectionSettings | null = null;
+
+  /** Kamera her değiştiğinde (ViewCube gibi bileşenler için). */
+  readonly onDidChangeCamera = new Emitter<void>();
+  /** Görsel stil, ızgara ya da kesit ayarı değişince. */
+  readonly onDidChangeDisplay = new Emitter<void>();
 
   constructor(private readonly app: SugarApp) {
     this.hint = h(
@@ -71,22 +161,11 @@ export class Viewport {
       h("kbd", {}, "Ekstrüzyon"),
       " ile 3D'ye çevirin",
     );
-    const viewButtons = h(
-      "div",
-      { class: "view-buttons" },
-      ...(
-        [
-          ["iso", "İzometrik"],
-          ["top", "Üst"],
-          ["front", "Ön"],
-          ["right", "Sağ"],
-        ] as [ViewName, string][]
-      ).map(([name, label]) => h("button", { title: `${label} görünüm`, onclick: () => this.setView(name) }, label)),
-    );
-    this.element = h("div", { class: "viewport" }, this.hint, viewButtons);
+    this.element = h("div", { class: "viewport" }, this.hint);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.localClippingEnabled = true;
     this.renderer.domElement.tabIndex = 0;
     this.element.prepend(this.renderer.domElement);
 
@@ -100,11 +179,11 @@ export class Viewport {
     this.controls.screenSpacePanning = true;
     this.controls.addEventListener("change", () => this.requestRender());
 
-    this.sketchGrid = new THREE.GridHelper(400, 80, 0x6a7080, 0x3c3f4a);
+    this.sketchGrid = new THREE.GridHelper(400, 80, this.c.sketchGridMain, this.c.sketchGridMinor);
     this.sketchGrid.visible = false;
     this.preview = new THREE.LineSegments(
       new THREE.BufferGeometry(),
-      new THREE.LineBasicMaterial({ color: COLOR_PREVIEW, depthTest: false }),
+      new THREE.LineBasicMaterial({ color: this.c.preview, depthTest: false, transparent: true }),
     );
     this.preview.renderOrder = 10;
 
@@ -118,26 +197,60 @@ export class Viewport {
       this.updateColors();
       this.refreshSketches();
     });
-    app.document.onDidChange.on(() => this.refreshSketches());
+    app.document.onDidChange.on(() => {
+      this.updateColors();
+      this.refreshSketches();
+    });
   }
 
-  private buildScene(): void {
-    const grid = new THREE.GridHelper(400, 40, 0x555a66, 0x34363e);
+  private buildGround(): void {
+    this.disposeGroup(this.ground);
+    const grid = new THREE.GridHelper(400, 40, this.c.gridMain, this.c.gridMinor);
     grid.rotation.x = Math.PI / 2;
     (grid.material as THREE.Material).transparent = true;
     (grid.material as THREE.Material).opacity = 0.7;
-    this.scene.add(grid);
-
     const axes = new THREE.AxesHelper(40);
     axes.position.z = 0.01;
-    this.scene.add(axes);
+    this.ground.add(grid, axes);
+  }
+
+  get currentTheme(): Theme {
+    return this.theme;
+  }
+
+  /** Açık / koyu tema: ızgara, eskiz ve gövde renkleri değişir. */
+  setTheme(theme: Theme): void {
+    this.theme = theme;
+    this.c = THEMES[theme];
+    this.edgeMaterial.color.set(this.c.edge);
+    this.preview.material.color.set(this.c.preview);
+    this.buildGround();
+    const old = this.sketchGrid;
+    const grid = new THREE.GridHelper(400, 80, this.c.sketchGridMain, this.c.sketchGridMinor);
+    grid.matrixAutoUpdate = false;
+    grid.matrix.copy(old.matrix);
+    grid.visible = old.visible;
+    this.scene.remove(old);
+    old.geometry.dispose();
+    (old.material as THREE.Material).dispose();
+    this.sketchGrid = grid;
+    this.scene.add(grid);
+    for (const item of this.items.values()) item.cap.material.color.set(this.c.cap);
+    this.updateColors();
+    this.refreshSketches();
+  }
+
+  private buildScene(): void {
+    this.buildGround();
+    this.scene.add(this.ground);
 
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x2a2c33, 1.6));
     // Işık kamerayla birlikte döner: her açıdan okunaklı gölgelendirme.
     const key = new THREE.DirectionalLight(0xffffff, 1.4);
     key.position.set(0.4, 0.6, 1);
     this.camera.add(key);
-    this.scene.add(this.camera, this.sketchGroup, this.sketchGrid, this.preview);
+    this.overlay.renderOrder = 20;
+    this.scene.add(this.camera, this.sketchGroup, this.sketchGrid, this.preview, this.overlay);
   }
 
   // ---- fare ----
@@ -192,17 +305,53 @@ export class Viewport {
     this.renderer.domElement.style.cursor = handler ? "crosshair" : "";
   }
 
+  get currentInteraction(): PointerHandler | null {
+    return this.interaction;
+  }
+
   private ndc(clientX: number, clientY: number): THREE.Vector2 {
     const rect = this.renderer.domElement.getBoundingClientRect();
     return new THREE.Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
   }
 
+  private visibleMeshes(): THREE.Mesh[] {
+    return [...this.items.values()].filter((i) => !i.mesh.userData.hidden).map((i) => i.mesh);
+  }
+
   /** Ekran koordinatındaki en yakın şeklin özellik kimliği. */
   pick(clientX: number, clientY: number): string | null {
     this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
-    const meshes = [...this.items.values()].map((i) => i.mesh);
-    const hit = this.raycaster.intersectObjects(meshes, false)[0];
+    const hit = this.raycaster.intersectObjects(this.visibleMeshes(), false).find((h) => this.unclipped(h.point));
     return (hit?.object.userData.featureId as string | undefined) ?? null;
+  }
+
+  private unclipped(p: THREE.Vector3): boolean {
+    return !this.clipPlane || this.clipPlane.distanceToPoint(p) >= -1e-6;
+  }
+
+  /**
+   * Gövde yüzeyindeki nokta (ölçüm için). İmleç bir üçgen köşesine yakınsa köşeye yapışır.
+   */
+  pickPoint(clientX: number, clientY: number): { point: Vec3; vertex: boolean } | null {
+    this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
+    const hit = this.raycaster.intersectObjects(this.visibleMeshes(), false).find((h) => this.unclipped(h.point));
+    if (!hit || !hit.face) return null;
+    const pos = (hit.object as THREE.Mesh).geometry.getAttribute("position");
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    let best: THREE.Vector3 | null = null;
+    let bestPx = 10;
+    for (const index of [hit.face.a, hit.face.b, hit.face.c]) {
+      const v = new THREE.Vector3().fromBufferAttribute(pos, index);
+      const s = v.clone().project(this.camera);
+      const px = Math.hypot(rect.left + ((s.x + 1) / 2) * rect.width - clientX, rect.top + ((1 - s.y) / 2) * rect.height - clientY);
+      if (px < bestPx) {
+        bestPx = px;
+        best = v;
+      }
+    }
+    const p = best ?? hit.point;
+    const r = (n: number) => Number(n.toFixed(4)) + 0;
+    return { point: [r(p.x), r(p.y), r(p.z)], vertex: best !== null };
   }
 
   /** Ekran noktasının eskiz düzlemindeki (u, v) karşılığı. */
@@ -215,11 +364,16 @@ export class Viewport {
     return [hit.dot(new THREE.Vector3(...u)), hit.dot(new THREE.Vector3(...v))];
   }
 
-  /** Eskiz düzlemindeki noktanın ekran konumu (testler ve yakalama için). */
-  screenPoint(plane: PlaneName, offset: number, p: Vec2): { x: number; y: number } {
-    const w = new THREE.Vector3(...toWorld(plane, offset, p)).project(this.camera);
+  /** Dünya noktasının ekran konumu. */
+  screenOf(p: Vec3): { x: number; y: number } {
+    const w = new THREE.Vector3(...p).project(this.camera);
     const rect = this.renderer.domElement.getBoundingClientRect();
     return { x: rect.left + ((w.x + 1) / 2) * rect.width, y: rect.top + ((1 - w.y) / 2) * rect.height };
+  }
+
+  /** Eskiz düzlemindeki noktanın ekran konumu (testler ve yakalama için). */
+  screenPoint(plane: PlaneName, offset: number, p: Vec2): { x: number; y: number } {
+    return this.screenOf(toWorld(plane, offset, p));
   }
 
   /** Hedef noktasında bir pikselin dünya birimi karşılığı (yakalama mesafesi, ızgara adımı için). */
@@ -234,9 +388,8 @@ export class Viewport {
     const item = this.items.get(id);
     if (!item) return null;
     item.mesh.geometry.computeBoundingBox();
-    const center = item.mesh.geometry.boundingBox!.getCenter(new THREE.Vector3()).project(this.camera);
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    return { x: rect.left + ((center.x + 1) / 2) * rect.width, y: rect.top + ((1 - center.y) / 2) * rect.height };
+    const c = item.mesh.geometry.boundingBox!.getCenter(new THREE.Vector3());
+    return this.screenOf([c.x, c.y, c.z]);
   }
 
   // ---- düzlem seçme ----
@@ -350,7 +503,9 @@ export class Viewport {
     this.sketchGrid.matrix
       .makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...n), new THREE.Vector3(...v))
       .setPosition(new THREE.Vector3(...n).multiplyScalar(offset));
-    this.sketchGrid.visible = true;
+    this.sketchGrid.visible = this.sketchOptions.grid;
+    // Eskizde zemin ızgarası yerine eskiz ızgarası görünür (Fusion'daki gibi).
+    this.ground.visible = false;
     this.setView(PLANE_VIEWS[plane]);
     this.refreshSketches();
   }
@@ -359,7 +514,27 @@ export class Viewport {
     this.activeSketch = null;
     this.controls.enableRotate = true;
     this.sketchGrid.visible = false;
+    this.ground.visible = this.gridVisible;
+    this.highlight = { selected: new Set(), hovered: -1 };
     this.setPreview([], "XY", 0);
+    this.refreshSketches();
+  }
+
+  setSketchOptions(options: { grid: boolean; profiles: boolean }): void {
+    const changed = options.grid !== this.sketchOptions.grid || options.profiles !== this.sketchOptions.profiles;
+    this.sketchOptions = { ...options };
+    this.sketchGrid.visible = this.activeSketch !== null && options.grid;
+    if (changed) this.refreshSketches();
+  }
+
+  /** Etkin eskizde seçili ve imlecin üstündeki öğeler. */
+  setSketchHighlight(selected: number[], hovered: number): void {
+    const same =
+      hovered === this.highlight.hovered &&
+      selected.length === this.highlight.selected.size &&
+      selected.every((i) => this.highlight.selected.has(i));
+    if (same) return;
+    this.highlight = { selected: new Set(selected), hovered };
     this.refreshSketches();
   }
 
@@ -384,34 +559,184 @@ export class Viewport {
     this.requestRender();
   }
 
+  private disposeGroup(group: THREE.Group): void {
+    for (const child of [...group.children]) {
+      const obj = child as THREE.Mesh | THREE.LineSegments | THREE.Points;
+      obj.geometry.dispose();
+      (obj.material as THREE.Material).dispose();
+      group.remove(obj);
+    }
+  }
+
   /** Görünür eskizleri (kullanılmamış, seçili ya da düzenlenen) çizgi olarak çizer. */
   private refreshSketches(): void {
     const doc = this.app.document;
-    for (const child of [...this.sketchGroup.children]) {
-      const line = child as THREE.LineSegments;
-      line.geometry.dispose();
-      (line.material as THREE.Material).dispose();
-      this.sketchGroup.remove(line);
-    }
+    this.disposeGroup(this.sketchGroup);
     const selected = new Set(doc.getSelection());
     for (const f of doc.all()) {
       if (f.type !== "sketch" || !f.plane) continue;
       const active = f.id === this.activeSketch;
-      if (!active && !selected.has(f.id) && doc.parentOf(f.id)) continue;
-      const pts: number[] = [];
-      for (const [a, b] of sketchSegments(f.entities ?? [])) {
-        pts.push(...toWorld(f.plane, f.params.offset ?? 0, a), ...toWorld(f.plane, f.params.offset ?? 0, b));
+      const free = !doc.parentOf(f.id);
+      if (!active && !selected.has(f.id) && (!free || f.hidden)) continue;
+      const entities = f.entities ?? [];
+      const offset = f.params.offset ?? 0;
+      const color = active ? this.c.sketchActive : selected.has(f.id) ? this.c.sketchSelected : this.c.sketch;
+      const groups = new Map<string, { color: string; dashed: boolean; entities: SketchEntity[] }>();
+      entities.forEach((e, i) => {
+        let key = e.construction ? "construction" : "normal";
+        let c = e.construction ? this.c.construction : color;
+        if (active && this.highlight.selected.has(i)) {
+          key = `sel-${key}`;
+          c = this.c.entitySelected;
+        } else if (active && this.highlight.hovered === i) {
+          key = `hover-${key}`;
+          c = this.c.entityHover;
+        }
+        const g = groups.get(key) ?? { color: c, dashed: !!e.construction, entities: [] };
+        g.entities.push(e);
+        groups.set(key, g);
+      });
+      for (const g of groups.values()) {
+        const pts: number[] = [];
+        for (const [a, b] of sketchSegments(g.entities)) pts.push(...toWorld(f.plane, offset, a), ...toWorld(f.plane, offset, b));
+        if (!pts.length) continue;
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+        const material = g.dashed
+          ? new THREE.LineDashedMaterial({ color: g.color, depthTest: !active, transparent: true, dashSize: this.worldPerPixel() * 6, gapSize: this.worldPerPixel() * 4 })
+          : // Saydam geçişte çizilir ki yarı saydam zemin ızgarası çizgilerin üstüne binmesin.
+            new THREE.LineBasicMaterial({ color: g.color, depthTest: !active, transparent: true });
+        const line = new THREE.LineSegments(geometry, material);
+        if (g.dashed) line.computeLineDistances();
+        line.renderOrder = active ? 9 : 1;
+        line.userData.featureId = f.id;
+        this.sketchGroup.add(line);
       }
-      if (pts.length === 0) continue;
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-      const color = active ? COLOR_SKETCH_ACTIVE : selected.has(f.id) ? COLOR_SKETCH_SELECTED : COLOR_SKETCH;
-      const line = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color, depthTest: !active }));
-      line.renderOrder = active ? 9 : 1;
-      line.userData.featureId = f.id;
-      this.sketchGroup.add(line);
+      // Kapalı bölgeler hafifçe boyanır: neyin katıya çevrilebileceği görünsün.
+      if ((active && this.sketchOptions.profiles) || (!active && free)) this.addProfileFill(f.plane, offset, entities, active);
     }
     this.updateHint();
+    this.requestRender();
+  }
+
+  private addProfileFill(plane: PlaneName, offset: number, entities: SketchEntity[], active: boolean): void {
+    const regions = profileRegions(sketchProfiles(entities));
+    if (!regions.length) return;
+    const shapes = regions.map(({ outer, holes }) => {
+      const shape = new THREE.Shape(outer.map(([x, y]) => new THREE.Vector2(x, y)));
+      for (const hole of holes) shape.holes.push(new THREE.Path(hole.map(([x, y]) => new THREE.Vector2(x, y))));
+      return shape;
+    });
+    const geometry = new THREE.ShapeGeometry(shapes);
+    const { u, v, n } = PLANES[plane];
+    const m = new THREE.Matrix4()
+      .makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...v), new THREE.Vector3(...n))
+      .setPosition(new THREE.Vector3(...n).multiplyScalar(offset));
+    geometry.applyMatrix4(m);
+    const fill = new THREE.Mesh(
+      geometry,
+      new THREE.MeshBasicMaterial({
+        color: this.c.profile,
+        transparent: true,
+        opacity: active ? 0.16 : 0.08,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+      }),
+    );
+    fill.renderOrder = 2;
+    this.sketchGroup.add(fill);
+  }
+
+  // ---- ölçüm katmanı ----
+
+  /** Ölçüm çizgileri ve noktaları (her zaman üstte çizilir). */
+  setOverlay(segments: [Vec3, Vec3][], points: Vec3[]): void {
+    this.disposeGroup(this.overlay);
+    if (segments.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(segments.flatMap(([a, b]) => [...a, ...b]), 3));
+      const lines = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: this.c.overlay, depthTest: false }));
+      lines.renderOrder = 20;
+      this.overlay.add(lines);
+    }
+    if (points.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(points.flat(), 3));
+      const dots = new THREE.Points(g, new THREE.PointsMaterial({ color: this.c.overlay, size: 8, sizeAttenuation: false, depthTest: false }));
+      dots.renderOrder = 21;
+      this.overlay.add(dots);
+    }
+    this.requestRender();
+  }
+
+  // ---- görüntü ayarları ----
+
+  get visualStyle(): VisualStyle {
+    return this.style;
+  }
+
+  setVisualStyle(style: VisualStyle): void {
+    this.style = style;
+    this.applyItemDisplay();
+    this.onDidChangeDisplay.fire();
+  }
+
+  get isGridVisible(): boolean {
+    return this.gridVisible;
+  }
+
+  setGridVisible(visible: boolean): void {
+    this.gridVisible = visible;
+    this.ground.visible = visible && this.activeSketch === null;
+    this.requestRender();
+    this.onDidChangeDisplay.fire();
+  }
+
+  get section(): SectionSettings | null {
+    return this.sectionSettings;
+  }
+
+  /** Kesit analizi: düzlemin bir tarafını keser, kesilen yüzü kırmızı kapakla gösterir. null kapatır. */
+  setSection(settings: SectionSettings | null): void {
+    this.sectionSettings = settings ? { ...settings } : null;
+    if (settings) {
+      const n = new THREE.Vector3(...PLANES[settings.plane].n);
+      // distanceToPoint < 0 olan taraf kesilir: varsayılan olarak normal yönündeki taraf gizlenir.
+      const sign = settings.flip ? 1 : -1;
+      this.clipPlane = new THREE.Plane(n.multiplyScalar(sign), -sign * settings.offset);
+    } else {
+      this.clipPlane = null;
+    }
+    this.applyItemDisplay();
+    this.onDidChangeDisplay.fire();
+  }
+
+  /** Kesit için düzlem yönündeki sınırlar (kaydırıcı aralığı). */
+  extentAlong(plane: PlaneName): [number, number] {
+    const box = this.bounds(false);
+    if (box.isEmpty()) return [-50, 50];
+    const n = new THREE.Vector3(...PLANES[plane].n);
+    const corners = [box.min, box.max].flatMap((a) => [box.min, box.max].flatMap((b) => [box.min, box.max].map((c) => new THREE.Vector3(a.x, b.y, c.z))));
+    const d = corners.map((p) => p.dot(n));
+    return [Math.min(...d), Math.max(...d)];
+  }
+
+  private applyItemDisplay(): void {
+    const planes = this.clipPlane ? [this.clipPlane] : [];
+    this.edgeMaterial.clippingPlanes = planes;
+    this.edgeMaterial.needsUpdate = true;
+    for (const item of this.items.values()) {
+      const hidden = !!item.mesh.userData.hidden;
+      item.mesh.visible = !hidden && this.style !== "wireframe";
+      item.edges.visible = !hidden && this.style !== "shaded";
+      item.cap.visible = !hidden && !!this.clipPlane && this.style !== "wireframe";
+      item.mesh.material.clippingPlanes = planes;
+      item.mesh.material.needsUpdate = true;
+      item.cap.material.clippingPlanes = planes;
+      item.cap.material.needsUpdate = true;
+    }
     this.requestRender();
   }
 
@@ -441,9 +766,9 @@ export class Viewport {
     geometry.setAttribute("position", new THREE.BufferAttribute(data.positions, 3));
     geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
     const material = new THREE.MeshStandardMaterial({
-      color: COLOR_BODY,
+      color: this.c.body,
       metalness: 0.05,
-      roughness: 0.65,
+      roughness: 0.6,
       flatShading: true,
       polygonOffset: true,
       polygonOffsetFactor: 1,
@@ -452,38 +777,44 @@ export class Viewport {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData.featureId = id;
     const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry, EDGE_ANGLE), this.edgeMaterial);
-    this.scene.add(mesh, edges);
-    this.items.set(id, { mesh, edges });
+    const cap = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: this.c.cap, side: THREE.BackSide }));
+    this.scene.add(mesh, edges, cap);
+    this.items.set(id, { mesh, edges, cap });
   }
 
   private removeItem(id: string): void {
     const item = this.items.get(id);
     if (!item) return;
-    this.scene.remove(item.mesh, item.edges);
+    this.scene.remove(item.mesh, item.edges, item.cap);
     item.mesh.geometry.dispose();
     item.mesh.material.dispose();
+    item.cap.material.dispose();
     item.edges.geometry.dispose();
     this.items.delete(id);
   }
 
   private updateColors(): void {
-    const selected = new Set(this.app.document.getSelection());
+    const doc = this.app.document;
+    const selected = new Set(doc.getSelection());
     // Seçili bir girdi (işlenen, eskiz), sahnede onu içeren kök şekil üzerinden vurgulanır.
     for (const id of [...selected]) {
-      let parent = this.app.document.parentOf(id);
+      let parent = doc.parentOf(id);
       while (parent) {
         selected.add(parent.id);
-        parent = this.app.document.parentOf(parent.id);
+        parent = doc.parentOf(parent.id);
       }
     }
-    for (const [id, item] of this.items) item.mesh.material.color.copy(selected.has(id) ? COLOR_SELECTED : COLOR_BODY);
-    this.requestRender();
+    for (const [id, item] of this.items) {
+      item.mesh.material.color.set(selected.has(id) ? this.c.selected : this.c.body);
+      item.mesh.userData.hidden = !!doc.get(id)?.hidden;
+    }
+    this.applyItemDisplay();
   }
 
-  private bounds(): THREE.Box3 {
+  private bounds(includeSketches = true): THREE.Box3 {
     const box = new THREE.Box3();
-    for (const { mesh } of this.items.values()) box.expandByObject(mesh);
-    for (const line of this.sketchGroup.children) box.expandByObject(line);
+    for (const { mesh } of this.items.values()) if (!mesh.userData.hidden) box.expandByObject(mesh);
+    if (includeSketches) for (const line of this.sketchGroup.children) box.expandByObject(line);
     return box;
   }
 
@@ -505,16 +836,16 @@ export class Viewport {
   }
 
   setView(name: ViewName): void {
-    const dirs: Record<ViewName, THREE.Vector3> = {
-      iso: new THREE.Vector3(0.55, -0.8, 0.6),
-      top: new THREE.Vector3(0, -0.0001, 1),
-      front: new THREE.Vector3(0, -1, 0),
-      right: new THREE.Vector3(1, 0, 0),
-    };
     const distance = this.camera.position.distanceTo(this.controls.target);
-    this.camera.position.copy(this.controls.target).addScaledVector(dirs[name].normalize(), distance);
+    this.camera.position.copy(this.controls.target).addScaledVector(new THREE.Vector3(...VIEW_DIRS[name]).normalize(), distance);
     this.controls.update();
     this.fit();
+  }
+
+  /** Görünümden kameraya doğru birim vektörlerin, kameranın ekran eksenlerindeki karşılığı (ViewCube için). */
+  viewRotation(): number[] {
+    this.camera.updateMatrixWorld();
+    return this.camera.matrixWorldInverse.elements.slice();
   }
 
   private resize(): void {
@@ -532,6 +863,7 @@ export class Viewport {
     requestAnimationFrame(() => {
       this.renderQueued = false;
       this.renderer.render(this.scene, this.camera);
+      this.onDidChangeCamera.fire();
     });
   }
 }
