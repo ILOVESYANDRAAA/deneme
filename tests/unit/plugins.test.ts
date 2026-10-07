@@ -187,3 +187,23 @@ describe("PluginHost dayanıklılık", () => {
     expect(app.host.list()[0].state).toBe("active");
   });
 });
+
+describe("PluginHost zaman aşımı", () => {
+  it("takılan şekil üreticisi eklentiyi durdurur; sonraki kullanımda yeniden başlar", async () => {
+    const { app } = await createApp({ buildTimeoutMs: 50 });
+    await app.loadPlugins([
+      inlinePlugin(
+        { name: "takilan", contributes: { primitives: [{ type: "takilan.s", label: "S", params: {} }] } },
+        `let ilk = true;
+         exports.activate = (s) => s.primitives.register("takilan.s", () => {
+           if (ilk) { ilk = false; return new Promise(() => {}); }
+           return s.solids.box([1, 1, 1]);
+         });`,
+      ),
+    ]);
+    await expect(app.addPrimitive("takilan.s")).rejects.toThrow(/yanıt vermedi/);
+    expect(app.host.list()[0].state).toBe("failed");
+    // Yeni işçi = yeni durum: ilk çağrı yine takılır (eklenti kodu baştan yüklenir).
+    await expect(app.addPrimitive("takilan.s")).rejects.toThrow(/yanıt vermedi/);
+  });
+});

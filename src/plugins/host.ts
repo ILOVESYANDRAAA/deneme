@@ -5,7 +5,7 @@ import { Emitter, type Disposable } from "../core/events";
 import type { Feature, ParamValues, PrimitiveRegistry } from "../core/features";
 import { validateSolid, type BooleanOp, type Solid, type Vec3 } from "../core/solid";
 import { validateManifest, type PluginManifest, type PluginSource } from "./manifest";
-import { RpcChannel, type Endpoint } from "./rpc";
+import { RpcChannel, RpcTimeoutError, type Endpoint } from "./rpc";
 
 /** Eklenti sunucusunun uygulamadan beklediği işlemler. */
 export interface HostServices {
@@ -231,7 +231,15 @@ export class PluginHost {
     const owner = this.primitiveOwners.get(type);
     if (!owner) throw new Error(`Şekil türünü sağlayan eklenti yok: ${type}`);
     const rpc = await this.ensureActive(owner);
-    const solid = await rpc.call("buildPrimitive", [type, params], this.buildTimeoutMs);
+    let solid: unknown;
+    try {
+      solid = await rpc.call("buildPrimitive", [type, params], this.buildTimeoutMs);
+    } catch (e) {
+      // Takılan eklentinin işçisi meşgul kalır; durdurulur, sonraki kullanımda yeniden başlar.
+      const plugin = this.plugins.get(owner);
+      if (e instanceof RpcTimeoutError && plugin) this.fail(plugin, e.message);
+      throw e;
+    }
     return validateSolid(solid, type);
   }
 

@@ -11,6 +11,9 @@ type RpcMessage =
 
 type Handler = (...args: unknown[]) => unknown;
 
+/** Karşı taraf süresinde yanıt vermedi (ör. sonsuz döngüdeki eklenti). */
+export class RpcTimeoutError extends Error {}
+
 /** İki yönlü, Promise tabanlı mesajlaşma. Her iki uç da hem çağırabilir hem yanıtlayabilir. */
 export class RpcChannel {
   private nextId = 1;
@@ -35,7 +38,7 @@ export class RpcChannel {
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
           this.waiting.delete(id);
-          reject(new Error(`"${method}" ${timeoutMs} ms içinde yanıt vermedi`));
+          reject(new RpcTimeoutError(`"${method}" ${timeoutMs} ms içinde yanıt vermedi`));
         }, timeoutMs);
       }
       this.waiting.set(id, {
