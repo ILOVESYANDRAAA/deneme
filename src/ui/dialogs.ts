@@ -10,11 +10,27 @@ export class Notifications {
     document.body.append(this.container);
   }
 
-  show(text: string, kind: MessageKind = "info"): void {
-    const toast = h("div", { class: `toast ${kind}`, onclick: () => toast.remove() }, text);
+  /** Düğmeli bildirimler kendiliğinden kapanmaz; dönen öğe metni güncellemek için kullanılabilir. */
+  show(text: string, kind: MessageKind = "info", actions: { label: string; run: () => void }[] = []): HTMLElement {
+    const message = h("div", { class: "toast-text" }, text);
+    const toast = h(
+      "div",
+      { class: `toast ${kind}`, onclick: () => !actions.length && toast.remove() },
+      message,
+      actions.length
+        ? h(
+            "div",
+            { class: "btn-row" },
+            ...actions.map((a, i) =>
+              h("button", { class: i === 0 ? "btn primary" : "btn", onclick: () => (toast.remove(), a.run()) }, a.label),
+            ),
+          )
+        : null,
+    );
     this.container.append(toast);
     while (this.container.children.length > 5) this.container.firstElementChild?.remove();
-    setTimeout(() => toast.remove(), kind === "error" ? 9000 : 4500);
+    if (!actions.length) setTimeout(() => toast.remove(), kind === "error" ? 9000 : 4500);
+    return message;
   }
 }
 

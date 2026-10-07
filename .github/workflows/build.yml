@@ -9,6 +9,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Her çalıştırma yeni bir sürüm numarası alır; otomatik güncelleme bunu karşılaştırır.
+  APP_VERSION: 0.1.${{ github.run_number }}
+
 jobs:
   test:
     name: Testler
@@ -30,9 +34,49 @@ jobs:
           name: playwright-sonuclari
           path: test-results/
 
+  release-prep:
+    name: Sürüm taslağı
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - id: decide
+        name: Yayın yapılacak mı?
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          IS_RELEASE_BRANCH: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'claude/dazzling-tesla-iurb6a') }}
+        run: |
+          if [ "$IS_RELEASE_BRANCH" = "true" ] && [ "$HAS_KEY" = "true" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            if [ "$HAS_KEY" != "true" ]; then
+              echo "::notice::TAURI_SIGNING_PRIVATE_KEY secret'ı yok; otomatik güncelleme yayını atlandı, sadece artifact üretilecek."
+            fi
+          fi
+      - id: create
+        name: Taslak Release oluştur
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          id=$(gh api -X POST "repos/${{ github.repository }}/releases" \
+            -f tag_name="v$APP_VERSION" \
+            -f target_commitish="${{ github.sha }}" \
+            -f name="sugarCAD v$APP_VERSION" \
+            -f body="Otomatik derleme: ${{ github.sha }}" \
+            -F draft=true --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   desktop:
     name: Masaüstü (${{ matrix.platform }})
-    needs: test
+    needs: release-prep
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -60,11 +104,28 @@ jobs:
         with:
           workspaces: src-tauri
       - run: npm ci
+      - name: Sürüm numarası
+        shell: bash
+        run: npm version "$APP_VERSION" --no-git-tag-version --allow-same-version
       - name: Rust testleri
         if: matrix.platform == 'linux'
         working-directory: src-tauri
         run: cargo test
-      - run: npm run tauri build
+      - name: Derle, imzala ve Release'e yükle
+        if: needs.release-prep.outputs.publish == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        with:
+          releaseId: ${{ needs.release-prep.outputs.release_id }}
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+      - name: Derle (imzasız)
+        if: needs.release-prep.outputs.publish != 'true'
+        shell: bash
+        run: npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false}}'
       - uses: actions/upload-artifact@v4
         with:
           name: sugarcad-${{ matrix.platform }}
@@ -75,3 +136,18 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
+
+  publish:
+    name: Sürümü yayınla
+    needs: [release-prep, desktop]
+    if: needs.release-prep.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Üç platform da yüklendikten sonra taslak yayına alınır; uygulamalar bu sürümü görür.
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api -X PATCH "repos/${{ github.repository }}/releases/${{ needs.release-prep.outputs.release_id }}" \
+            -F draft=false -f make_latest=true --jq '.html_url'

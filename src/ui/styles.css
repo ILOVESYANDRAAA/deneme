@@ -668,6 +668,11 @@ select:focus {
   white-space: pre-wrap;
 }
 
+.toast .btn-row {
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
 .toast.warning {
   border-left-color: var(--warning);
 }

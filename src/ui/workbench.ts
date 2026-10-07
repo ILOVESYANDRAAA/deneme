@@ -11,6 +11,7 @@ import { CommandPalette } from "./palette";
 import { PropertiesPanel } from "./properties";
 import { Sketcher, TOOL_LABELS, type SketchTool } from "./sketcher";
 import { FeatureTree } from "./tree";
+import { UpdateChecker } from "./updates";
 import { Viewport, type ViewName } from "./viewport";
 
 /** Arayüzün bildirim ve form tarafı; uygulama kurulmadan önce de hazır olmalı. */
@@ -19,6 +20,11 @@ export class WorkbenchUi implements UiBridge {
 
   showMessage(text: string, kind: MessageKind): void {
     this.notifications.show(text, kind);
+  }
+
+  /** Düğmeli, kendiliğinden kapanmayan bildirim. Dönen öğenin metni güncellenebilir. */
+  notify(text: string, kind: MessageKind, actions: { label: string; run: () => void }[]): HTMLElement {
+    return this.notifications.show(text, kind, actions);
   }
 
   showInput(options: { title: string; fields: InputField[] }) {
@@ -37,11 +43,15 @@ export class Workbench {
   private views: Record<"tree" | "extensions", HTMLElement>;
   private activityButtons: Record<"tree" | "extensions", HTMLButtonElement>;
   private lastComputeMs = 0;
+  private version = "";
+  readonly updates: UpdateChecker;
 
   constructor(
     root: HTMLElement,
     private readonly app: SugarApp,
+    ui: WorkbenchUi,
   ) {
+    this.updates = new UpdateChecker(app, ui);
     this.palette = new CommandPalette(app.commands);
     this.viewport = new Viewport(app);
     this.sketcher = new Sketcher(app, this.viewport);
@@ -102,6 +112,10 @@ export class Workbench {
       this.renderStatus();
     });
     app.onDidChangeTitle.on((t) => app.platform.setTitle(t));
+    void app.platform.appVersion().then((v) => {
+      this.version = v;
+      this.renderStatus();
+    });
     app.platform.setTitle(app.title());
 
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
@@ -133,6 +147,10 @@ export class Workbench {
     c.register({ id: "view.extensions", title: "Eklentileri Göster", category: "Görünüm", keybinding: "Ctrl+Shift+X" }, () =>
       this.showView("extensions"),
     );
+    c.register({ id: "help.checkUpdates", title: "Güncellemeleri Denetle", category: "Yardım" }, () => {
+      if (this.app.platform.name !== "tauri") throw new Error("Güncelleme denetimi masaüstü uygulamasında çalışır");
+      return this.updates.check(true);
+    });
   }
 
   private registerSketchCommands(): void {
@@ -275,6 +293,7 @@ export class Workbench {
       errors ? h("span", { style: "color:var(--danger)" }, `${errors} hata`) : null,
       h("span", { class: "grow" }),
       this.lastComputeMs ? h("span", {}, `Hesap: ${this.lastComputeMs.toFixed(1)} ms`) : null,
+      this.version ? h("span", { title: "sugarCAD sürümü" }, `v${this.version}`) : null,
       h("span", {}, h("kbd", {}, "Ctrl+Shift+P"), " komutlar"),
       ),
     );

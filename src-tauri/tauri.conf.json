@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "sugarCAD",
-  "version": "0.1.0",
+  "version": "../package.json",
   "identifier": "app.sugarcad.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -35,6 +35,18 @@
       "icons/icon.ico"
     ],
     "category": "GraphicsAndDesign",
-    "shortDescription": "Hafif, eklenti destekli 3D CAD"
+    "shortDescription": "Hafif, eklenti destekli 3D CAD",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0ODE1QzQwQzlFMDgwNjEKUldSaGdPREpRRnlCcEhLM2R3ZStBQnJMZGVTdUVKQzdhbEZGTktyc2huZHd2NHVndDcyQTZOK28K",
+      "endpoints": [
+        "https://github.com/ILOVESYANDRAAA/deneme/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

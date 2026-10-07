@@ -1,8 +1,11 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check } from "@tauri-apps/plugin-updater";
 import type { PluginManifest, PluginSource } from "../plugins/manifest";
-import type { Platform } from "./adapter";
+import type { AvailableUpdate, Platform } from "./adapter";
 
 const SUGAR_FILTER = [{ name: "sugarCAD çizimi", extensions: ["sugar"] }];
 
@@ -57,5 +60,30 @@ export class TauriPlatform implements Platform {
 
   setTitle(title: string): void {
     void getCurrentWindow().setTitle(title);
+  }
+
+  appVersion(): Promise<string> {
+    return getVersion();
+  }
+
+  async checkForUpdate(): Promise<AvailableUpdate | null> {
+    const update = await check();
+    if (!update) return null;
+    return {
+      version: update.version,
+      notes: update.body,
+      install: async (progress) => {
+        let total = 0;
+        let done = 0;
+        await update.downloadAndInstall((event) => {
+          if (event.event === "Started") total = event.data.contentLength ?? 0;
+          if (event.event === "Progress") {
+            done += event.data.chunkLength;
+            progress?.(total ? done / total : null);
+          }
+        });
+        await relaunch();
+      },
+    };
   }
 }

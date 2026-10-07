@@ -72,6 +72,18 @@ cd src-tauri && cargo test
 Her push'ta GitHub Actions testleri çalıştırır ve Windows, macOS ve Linux için kurulum
 dosyalarını derleyip **Actions → ilgili çalıştırma → Artifacts** altına koyar.
 
+### Otomatik güncelleme
+
+`main` ve geliştirme dalına her push'ta CI, `0.1.<çalıştırma no>` sürümüyle imzalı paketleri bir
+GitHub **Release**'e yükler; üç platform da bitince release yayına alınır. Masaüstü uygulaması
+açılışta (ve komut paletindeki **Güncellemeleri Denetle** ile) yeni sürümü görür, onayla indirip
+kurar ve yeniden başlar. Bunun için:
+
+- Repo **public** olmalı (uygulama `releases/latest/download/latest.json` adresini okur).
+- Repo ayarlarında **TAURI_SIGNING_PRIVATE_KEY** secret'ı tanımlı olmalı (güncellemeleri imzalayan
+  anahtar; açık anahtarı `src-tauri/tauri.conf.json` içinde). Secret yoksa CI sadece imzasız
+  artifact üretir, release yayınlamaz.
+
 ## Proje yapısı
 
 ```

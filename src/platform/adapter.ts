@@ -13,6 +13,16 @@ export interface Platform {
   /** Kullanıcı eklenti klasörünün yolu (tarayıcıda yok). */
   userPluginsDir(): Promise<string | null>;
   setTitle(title: string): void;
+  appVersion(): Promise<string>;
+  /** Yayınlanmış daha yeni bir sürüm varsa onu döndürür (sadece masaüstü). */
+  checkForUpdate(): Promise<AvailableUpdate | null>;
+}
+
+export interface AvailableUpdate {
+  version: string;
+  notes?: string;
+  /** İndirir, kurar ve uygulamayı yeniden başlatır. `progress` 0–1 arası (boyut bilinmiyorsa null). */
+  install(progress?: (fraction: number | null) => void): Promise<void>;
 }
 
 export async function detectPlatform(): Promise<Platform> {

@@ -1,5 +1,5 @@
 import type { PluginSource } from "../plugins/manifest";
-import type { Platform } from "./adapter";
+import type { AvailableUpdate, Platform } from "./adapter";
 
 function download(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
@@ -49,5 +49,14 @@ export class BrowserPlatform implements Platform {
 
   setTitle(title: string): void {
     document.title = title;
+  }
+
+  async appVersion(): Promise<string> {
+    return __APP_VERSION__;
+  }
+
+  /** Tarayıcıda sayfayı yenilemek yeterli; güncelleme denetimi yok. */
+  async checkForUpdate(): Promise<AvailableUpdate | null> {
+    return null;
   }
 }
