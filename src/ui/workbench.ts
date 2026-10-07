@@ -128,20 +128,26 @@ export class Workbench {
 
   private renderToolbar(): void {
     const app = this.app;
-    const tool = (label: string, svg: string, command: string, opts: { disabled?: boolean; title?: string } = {}) => {
+    const tool = (
+      label: string,
+      svg: string,
+      command: string,
+      opts: { disabled?: boolean; title?: string; kind?: "shape" | "op" } = {},
+    ) => {
       const info = app.commands.get(command);
       const btn = h(
         "button",
         {
-          class: "tool",
+          class: opts.kind ? `tool ${opts.kind}` : "tool",
           disabled: opts.disabled ?? false,
           title: opts.title ?? (info?.keybinding ? `${info.title} (${info.keybinding})` : (info?.title ?? label)),
           onclick: () => app.commands.run(command),
           dataset: { command },
         },
         icon(svg),
-        label,
+        label ? h("span", { class: "label" }, label) : null,
       );
+      if (label) btn.setAttribute("aria-label", label);
       return btn;
     };
     const sep = () => h("span", { class: "sep" });
@@ -150,10 +156,11 @@ export class Workbench {
     const shapes = app.primitives
       .list()
       .filter((p) => app.commands.has(`shape.add.${p.type}`))
-      .map((p) => tool(p.label, iconForType(p.type), `shape.add.${p.type}`));
+      .map((p) => tool(p.label, iconForType(p.type), `shape.add.${p.type}`, { kind: "shape" }));
     const ops = (Object.keys(BOOLEAN_LABELS) as BooleanOp[]).map((op) =>
       tool(BOOLEAN_LABELS[op], ICONS[op], `boolean.${op}`, {
         disabled: selCount !== 2,
+        kind: "op",
         title: `${BOOLEAN_LABELS[op]} — Ctrl ile iki şekil seçin`,
       }),
     );

@@ -206,6 +206,23 @@ kbd {
   scrollbar-width: none;
 }
 
+/* Dar alanda önce boolean, sonra şekil düğmelerinin yazısı gizlenir (ipucu kalır). */
+.main {
+  container-type: inline-size;
+}
+
+@container (max-width: 1000px) {
+  .tool.op .label {
+    display: none;
+  }
+}
+
+@container (max-width: 720px) {
+  .tool.shape .label {
+    display: none;
+  }
+}
+
 .toolbar .sep {
   flex: none;
   width: 1px;
