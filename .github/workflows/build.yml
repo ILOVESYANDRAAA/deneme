@@ -48,7 +48,8 @@ jobs:
         name: Yayın yapılacak mı?
         env:
           HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-          IS_RELEASE_BRANCH: ${{ github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'claude/dazzling-tesla-iurb6a') }}
+          # Elle tetikleme (Actions → Run workflow) de yayın yapar; PR'lar yapmaz.
+          IS_RELEASE_BRANCH: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref_name == 'main' || github.ref_name == 'claude/dazzling-tesla-iurb6a') }}
         run: |
           if [ "$IS_RELEASE_BRANCH" = "true" ] && [ "$HAS_KEY" = "true" ]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"

@@ -74,7 +74,7 @@ dosyalarını derleyip **Actions → ilgili çalıştırma → Artifacts** altı
 
 ### Otomatik güncelleme
 
-`main` ve geliştirme dalına her push'ta CI, `0.1.<çalıştırma no>` sürümüyle imzalı paketleri bir
+`main` ve geliştirme dalına her push'ta (ve Actions'tan elle "Run workflow" ile) CI, `0.1.<çalıştırma no>` sürümüyle imzalı paketleri bir
 GitHub **Release**'e yükler; üç platform da bitince release yayına alınır. Masaüstü uygulaması
 açılışta (ve komut paletindeki **Güncellemeleri Denetle** ile) yeni sürümü görür, onayla indirip
 kurar ve yeniden başlar. Bunun için:
