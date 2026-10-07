@@ -19,9 +19,12 @@ export type Solid =
   | { kind: "box"; size: Vec3 }
   | { kind: "cylinder"; radius: number; height: number; segments?: number }
   | { kind: "sphere"; radius: number; segments?: number }
-  | { kind: "extrude"; polygons: Vec2[][]; height: number }
+  | { kind: "extrude"; polygons: Vec2[][]; height: number; fillRule?: "Positive" | "EvenOdd" }
+  /** Y ekseni etrafında döndürür (sonuçta Y → Z); sadece x > 0 tarafı kullanılır. */
+  | { kind: "revolve"; polygons: Vec2[][]; angle: number; segments?: number; fillRule?: "Positive" | "EvenOdd" }
   | { kind: "boolean"; op: BooleanOp; children: Solid[] }
-  | { kind: "transform"; translate?: Vec3; rotate?: Vec3; child: Solid };
+  /** `matrix`: 4×4, sütun öncelikli (Three.js Matrix4.elements gibi). */
+  | { kind: "transform"; matrix?: number[]; translate?: Vec3; rotate?: Vec3; child: Solid };
 
 export type ParamValues = Record<string, number>;
 
@@ -96,6 +99,8 @@ export interface SugarCadApi {
     cylinder(radius: number, height: number, segments?: number): Solid;
     sphere(radius: number, segments?: number): Solid;
     extrude(polygons: Vec2[] | Vec2[][], height: number): Solid;
+    /** Profili Y ekseni etrafında döndürür; sonuçta Y ekseni Z olur. */
+    revolve(polygons: Vec2[] | Vec2[][], angle?: number): Solid;
     union(...solids: Solid[]): Solid;
     subtract(...solids: Solid[]): Solid;
     intersect(...solids: Solid[]): Solid;

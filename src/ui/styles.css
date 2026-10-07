@@ -249,6 +249,28 @@ kbd {
   border-color: var(--border);
 }
 
+.tool[aria-pressed="true"] {
+  background: var(--select);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.tool.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.tool.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, white);
+}
+
+.toolbar-title {
+  flex: none;
+  margin-left: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
 .tool:disabled {
   opacity: 0.4;
   cursor: default;
@@ -300,6 +322,66 @@ kbd {
 .viewport .view-buttons button:hover {
   background: var(--bg-hover);
   color: var(--text);
+}
+
+.plane-chips {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  white-space: nowrap;
+  /* Sağ üstteki görünüm düğmelerine (≈200px) değmesin */
+  max-width: calc(100% - 220px);
+  overflow-x: auto;
+}
+
+.plane-chips span {
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: var(--bg-hover);
+  border-radius: 14px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--bg-active);
+}
+
+.chip.plane-XY {
+  border-color: #4a7dff;
+}
+
+.chip.plane-XZ {
+  border-color: #3fbf6f;
+}
+
+.chip.plane-YZ {
+  border-color: #ff5a5a;
+}
+
+.statusbar .sketch-status {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.statusbar .coords {
+  font-family: var(--mono);
+  white-space: nowrap;
 }
 
 /* ---- özellik paneli ---- */

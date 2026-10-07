@@ -68,7 +68,7 @@ export async function createApp(options?: { activateTimeoutMs?: number; buildTim
 }
 
 export function pluginFromDisk(dir: string): PluginSource {
-  const base = resolve(__dirname, "../../plugins", dir);
+  const base = resolve(__dirname, "../../examples/plugins", dir);
   const manifest = JSON.parse(readFileSync(resolve(base, "sugarcad.json"), "utf8")) as PluginManifest;
   return { manifest, code: readFileSync(resolve(base, manifest.main), "utf8"), location: "builtin" };
 }

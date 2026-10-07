@@ -1,4 +1,4 @@
-import type { Manifold, ManifoldToplevel } from "manifold-3d";
+import type { Manifold, ManifoldToplevel, Mat4 } from "manifold-3d";
 import { solidKey, type Solid } from "../core/solid";
 
 /** İşçiden ana iş parçacığına aktarılan üçgen ağı. */
@@ -56,7 +56,16 @@ export class SolidEvaluator {
       case "sphere":
         return Manifold.sphere(solid.radius, solid.segments ?? 0);
       case "extrude":
-        return Manifold.extrude(solid.polygons, solid.height);
+      case "revolve": {
+        const section = new this.wasm.CrossSection(solid.polygons, solid.fillRule ?? "Positive");
+        try {
+          return solid.kind === "extrude"
+            ? Manifold.extrude(section, solid.height)
+            : Manifold.revolve(section, solid.segments ?? 0, solid.angle);
+        } finally {
+          section.delete();
+        }
+      }
       case "boolean": {
         const parts = solid.children.map((c) => this.evaluate(c));
         if (parts.length === 1) return parts[0].translate([0, 0, 0]);
@@ -67,10 +76,15 @@ export class SolidEvaluator {
       case "transform": {
         // Sonuç her zaman yeni bir nesnedir; önbellekteki çocuk ayrıca silinebilsin.
         const child = this.evaluate(solid.child);
-        const rotated = solid.rotate ? child.rotate(solid.rotate) : child;
-        const moved = solid.translate ? rotated.translate(solid.translate) : rotated;
-        if (rotated !== child && rotated !== moved) rotated.delete();
-        return moved === child ? child.translate([0, 0, 0]) : moved;
+        let m = child;
+        const step = (next: Manifold) => {
+          if (m !== child) m.delete();
+          m = next;
+        };
+        if (solid.matrix) step(m.transform(solid.matrix as Mat4));
+        if (solid.rotate) step(m.rotate(solid.rotate));
+        if (solid.translate) step(m.translate(solid.translate));
+        return m === child ? child.translate([0, 0, 0]) : m;
       }
     }
   }

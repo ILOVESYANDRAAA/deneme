@@ -9,13 +9,19 @@ export type Vec3 = [number, number, number];
 
 export type BooleanOp = "union" | "subtract" | "intersect";
 
+/** "Positive": saat yönünün tersi dolu, saat yönü delik. "EvenOdd": iç içe her şekil bir delik açar (eskizler). */
+export type FillRule = "Positive" | "EvenOdd";
+
 export type Solid =
   | { kind: "box"; size: Vec3 }
   | { kind: "cylinder"; radius: number; height: number; segments?: number }
   | { kind: "sphere"; radius: number; segments?: number }
-  | { kind: "extrude"; polygons: Vec2[][]; height: number }
+  | { kind: "extrude"; polygons: Vec2[][]; height: number; fillRule?: FillRule }
+  /** Çokgenleri Y ekseni etrafında döndürür; sonuçta Y ekseni Z olur (manifold kuralı). Sadece x > 0 tarafı kullanılır. */
+  | { kind: "revolve"; polygons: Vec2[][]; angle: number; segments?: number; fillRule?: FillRule }
   | { kind: "boolean"; op: BooleanOp; children: Solid[] }
-  | { kind: "transform"; translate?: Vec3; rotate?: Vec3; child: Solid };
+  /** `matrix`: 4×4 sütun öncelikli; varsa önce o, sonra rotate, sonra translate uygulanır. */
+  | { kind: "transform"; matrix?: number[]; translate?: Vec3; rotate?: Vec3; child: Solid };
 
 const MAX_DEPTH = 64;
 
@@ -57,7 +63,17 @@ export function validateSolid(value: unknown, path = "solid", depth = 0): Solid 
       }
       return s as unknown as Solid;
     case "extrude":
-      if (!isNum(s.height) || s.height <= 0) throw new Error(`${path}.height: pozitif olmalı`);
+    case "revolve":
+      if (s.kind === "extrude" && (!isNum(s.height) || s.height <= 0)) throw new Error(`${path}.height: pozitif olmalı`);
+      if (s.kind === "revolve" && (!isNum(s.angle) || s.angle <= 0 || s.angle > 360)) {
+        throw new Error(`${path}.angle: 0 ile 360 arasında olmalı`);
+      }
+      if (s.kind === "revolve" && s.segments !== undefined && (!isNum(s.segments) || s.segments < 3)) {
+        throw new Error(`${path}.segments: en az 3 olmalı`);
+      }
+      if (s.fillRule !== undefined && s.fillRule !== "Positive" && s.fillRule !== "EvenOdd") {
+        throw new Error(`${path}.fillRule: Positive | EvenOdd olmalı`);
+      }
       if (
         !Array.isArray(s.polygons) ||
         s.polygons.length === 0 ||
@@ -78,6 +94,9 @@ export function validateSolid(value: unknown, path = "solid", depth = 0): Solid 
       s.children.forEach((c, i) => validateSolid(c, `${path}.children[${i}]`, depth + 1));
       return s as unknown as Solid;
     case "transform":
+      if (s.matrix !== undefined && !isVec(s.matrix, 16)) {
+        throw new Error(`${path}.matrix: 16 sayılık 4×4 matris olmalı`);
+      }
       if (s.translate !== undefined && !isVec(s.translate, 3)) {
         throw new Error(`${path}.translate: [x, y, z] olmalı`);
       }

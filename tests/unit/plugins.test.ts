@@ -8,7 +8,7 @@ describe("validateManifest", () => {
   const ok = { name: "demo", version: "1.0.0", main: "index.js" };
 
   it("geçerli manifesti kabul eder", () => {
-    expect(validateManifest(pluginFromDisk("example-gear").manifest).name).toBe("gear");
+    expect(validateManifest(pluginFromDisk("gear").manifest).name).toBe("gear");
     expect(validateManifest(ok)).toEqual(ok);
   });
 
@@ -28,7 +28,7 @@ describe("validateManifest", () => {
 describe("PluginHost + örnek dişli eklentisi", () => {
   it("komut ve şekil katkılarını etkinleştirmeden kaydeder", async () => {
     const { app } = await createApp();
-    await app.loadPlugins([pluginFromDisk("example-gear")]);
+    await app.loadPlugins([pluginFromDisk("gear")]);
     expect(app.commands.get("gear.create")?.category).toBe("Dişli");
     expect(app.commands.has("shape.add.gear.spur")).toBe(true);
     expect(app.primitives.get("gear.spur")?.label).toBe("Düz Dişli");
@@ -37,7 +37,7 @@ describe("PluginHost + örnek dişli eklentisi", () => {
 
   it("komut çalışınca eklentiyi başlatır, girdiyi alır ve dişliyi üretir", async () => {
     const { app, ui } = await createApp();
-    await app.loadPlugins([pluginFromDisk("example-gear")]);
+    await app.loadPlugins([pluginFromDisk("gear")]);
     ui.inputs.push({ teeth: 12, module: 2, thickness: 5, bore: 6 });
     await app.commands.execute("gear.create");
     expect(app.host.list()[0].state).toBe("active");
@@ -55,7 +55,7 @@ describe("PluginHost + örnek dişli eklentisi", () => {
 
   it("parametre değişince eklenti şeklini yeniden üretir; geri alma tek adımdır", async () => {
     const { app } = await createApp();
-    await app.loadPlugins([pluginFromDisk("example-gear")]);
+    await app.loadPlugins([pluginFromDisk("gear")]);
     const gear = await app.addPrimitive("gear.spur", { teeth: 10 });
     const before = app.meshes.get(gear.id)!.volume;
     await app.updateFeature(gear.id, { params: { teeth: 30 } });
@@ -67,7 +67,7 @@ describe("PluginHost + örnek dişli eklentisi", () => {
 
   it("dişli profili doğru: uç dairesine ulaşır ve dişler uca doğru incelir", async () => {
     const { app } = await createApp();
-    await app.loadPlugins([pluginFromDisk("example-gear")]);
+    await app.loadPlugins([pluginFromDisk("gear")]);
     const teeth = 16;
     const module = 2;
     const gear = await app.addPrimitive("gear.spur", { teeth, module, bore: 0 });
@@ -90,14 +90,14 @@ describe("PluginHost + örnek dişli eklentisi", () => {
 
   it("parametreleri manifest sınırlarına çeker", async () => {
     const { app } = await createApp();
-    await app.loadPlugins([pluginFromDisk("example-gear")]);
+    await app.loadPlugins([pluginFromDisk("gear")]);
     const gear = await app.addPrimitive("gear.spur", { teeth: 2.6 });
     expect(gear.params.teeth).toBe(6);
   });
 
   it("eklenti yüklü değilken açılan dosya kayıtlı geometriyi gösterir", async () => {
     const { app: withPlugin } = await createApp();
-    await withPlugin.loadPlugins([pluginFromDisk("example-gear")]);
+    await withPlugin.loadPlugins([pluginFromDisk("gear")]);
     await withPlugin.addPrimitive("gear.spur");
     const text = withPlugin.document.serialize();
 
@@ -148,8 +148,8 @@ describe("PluginHost dayanıklılık", () => {
   it("aynı adlı eklentiyi ve çakışan komutu reddeder, diğerlerini yükler", async () => {
     const { app, ui } = await createApp();
     await app.loadPlugins([
-      pluginFromDisk("example-gear"),
-      pluginFromDisk("example-gear"),
+      pluginFromDisk("gear"),
+      pluginFromDisk("gear"),
       inlinePlugin({ name: "iyi" }, `exports.activate = () => {};`),
     ]);
     expect(app.host.list().map((p) => p.manifest.name)).toEqual(["gear", "iyi"]);
@@ -179,7 +179,7 @@ describe("PluginHost dayanıklılık", () => {
 
   it("durdurulan eklenti tekrar kullanılınca yeniden başlar", async () => {
     const { app } = await createApp();
-    await app.loadPlugins([pluginFromDisk("example-gear")]);
+    await app.loadPlugins([pluginFromDisk("gear")]);
     await app.addPrimitive("gear.spur");
     app.host.stop("gear");
     expect(app.host.list()[0].state).toBe("stopped");

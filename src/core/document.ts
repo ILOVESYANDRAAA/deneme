@@ -1,5 +1,5 @@
 import { Emitter } from "./events";
-import type { Feature } from "./features";
+import { featureRefs, isSolidFeature, type Feature } from "./features";
 import type { BooleanOp } from "./solid";
 
 export const FILE_VERSION = 1;
@@ -51,10 +51,10 @@ export class SugarDocument {
     return new Map(this.features.map((f) => [f.id, f]));
   }
 
-  /** Bir boolean özelliğinin işleneni olan (başka özellik tarafından tüketilen) özellik kimlikleri. */
+  /** Başka bir özelliğin girdisi olan (boolean işleneni, ekstrüzyonun eskizi...) özellik kimlikleri. */
   consumedIds(): Set<string> {
     const out = new Set<string>();
-    for (const f of this.features) f.operands?.forEach((id) => out.add(id));
+    for (const f of this.features) featureRefs(f).forEach((id) => out.add(id));
     return out;
   }
 
@@ -64,9 +64,9 @@ export class SugarDocument {
     return this.features.filter((f) => !consumed.has(f.id));
   }
 
-  /** Bu özelliği işlenen olarak kullanan boolean özelliği. */
+  /** Bu özelliği girdi olarak kullanan özellik. */
   parentOf(id: string): Feature | undefined {
-    return this.features.find((f) => f.operands?.includes(id));
+    return this.features.find((f) => featureRefs(f).includes(id));
   }
 
   get canUndo(): boolean {
@@ -122,13 +122,16 @@ export class SugarDocument {
       position: init.position ? [...init.position] : [0, 0, 0],
       rotation: init.rotation ? [...init.rotation] : [0, 0, 0],
     };
-    if (feature.operands) {
-      for (const id of feature.operands) {
-        if (!this.get(id)) throw new Error(`İşlenen bulunamadı: ${id}`);
-        if (this.parentOf(id)) throw new Error(`${this.get(id)!.name} zaten başka bir işlemde kullanılıyor`);
+    for (const id of featureRefs(feature)) {
+      const input = this.get(id);
+      if (!input) throw new Error(`Girdi bulunamadı: ${id}`);
+      if (this.parentOf(id)) throw new Error(`${input.name} zaten başka bir işlemde kullanılıyor`);
+      if (feature.operands && !isSolidFeature(input)) {
+        throw new Error(`${input.name} bir eskiz; boolean için önce Ekstrüzyon ya da Döndürme uygulayın`);
       }
-      if (feature.operands[0] === feature.operands[1]) throw new Error("İki farklı şekil seçin");
+      if (feature.sketch && input.type !== "sketch") throw new Error(`${input.name} bir eskiz değil`);
     }
+    if (feature.operands && feature.operands[0] === feature.operands[1]) throw new Error("İki farklı şekil seçin");
     this.checkpoint();
     this.features.push(feature);
     this.changed();

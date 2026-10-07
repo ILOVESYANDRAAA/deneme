@@ -125,4 +125,4 @@ Her `document.*` çağrısı tek bir **geri alma** adımıdır; kullanıcı `Ctr
   hata mesajı görünür. Komutu tekrar çalıştırmak eklentiyi yeniden başlatır.
 - `activate` ve şekil üreticileri **10 saniye** içinde bitmelidir.
 - `console.log` çıktıları geliştirici araçlarının konsolunda görünür (`npm run tauri dev`).
-- Örnek eklenti: [`plugins/example-gear`](../plugins/example-gear) (parametrik involüt dişli).
+- Örnek eklenti: [`examples/plugins/gear`](../examples/plugins/gear) (parametrik involüt dişli). Denemek için klasörü `~/.sugarcad/plugins/` içine kopyalayın.

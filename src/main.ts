@@ -14,14 +14,14 @@ async function start(): Promise<void> {
     new Worker(new URL("./plugins/worker.ts", import.meta.url), { type: "module", name: "sugarcad-plugin" }) as unknown as PluginWorker;
 
   const app = new SugarApp(platform, ui, geometry, createPluginWorker);
-  new Workbench(document.getElementById("app")!, app);
+  const workbench = new Workbench(document.getElementById("app")!, app);
 
   geometry.whenReady().catch((e) => ui.showMessage(`Geometri motoru başlatılamadı: ${e}`, "error"));
   await app.loadPlugins(builtinPlugins());
 
   if (import.meta.env.DEV) {
     // Geliştirme ve uçtan uca testler için.
-    (window as unknown as { sugarcad: SugarApp }).sugarcad = app;
+    Object.assign(window, { sugarcad: app, sugarcadUi: workbench });
   }
   document.body.dataset.ready = "true";
 }

@@ -1,6 +1,7 @@
 import type { InputField } from "../../packages/api/sugarcad";
 import type { MessageKind, SugarApp, UiBridge } from "../app/controller";
 import { BOOLEAN_LABELS } from "../core/features";
+import { PLANES, type PlaneName } from "../core/sketch";
 import type { BooleanOp } from "../core/solid";
 import { Notifications, showInputDialog } from "./dialogs";
 import { compact, h, icon, isTextInput } from "./dom";
@@ -8,6 +9,7 @@ import { ExtensionsPanel } from "./extensions";
 import { ICONS, iconForType } from "./icons";
 import { CommandPalette } from "./palette";
 import { PropertiesPanel } from "./properties";
+import { Sketcher, TOOL_LABELS, type SketchTool } from "./sketcher";
 import { FeatureTree } from "./tree";
 import { Viewport, type ViewName } from "./viewport";
 
@@ -27,6 +29,7 @@ export class WorkbenchUi implements UiBridge {
 /** VS Code düzeni: etkinlik çubuğu | yan panel | 3D görünüm | özellikler, altta durum çubuğu. */
 export class Workbench {
   readonly viewport: Viewport;
+  readonly sketcher: Sketcher;
   private palette: CommandPalette;
   private sidebar = h("aside", { class: "sidebar" });
   private toolbar = h("div", { class: "toolbar", attrs: { role: "toolbar", "aria-label": "Araçlar" } });
@@ -41,6 +44,7 @@ export class Workbench {
   ) {
     this.palette = new CommandPalette(app.commands);
     this.viewport = new Viewport(app);
+    this.sketcher = new Sketcher(app, this.viewport);
     this.views = {
       tree: new FeatureTree(app).element,
       extensions: new ExtensionsPanel(app).element,
@@ -64,7 +68,7 @@ export class Workbench {
       paletteButton,
     );
 
-    const props = new PropertiesPanel(app);
+    const props = new PropertiesPanel(app, this.sketcher);
     root.replaceChildren(
       h(
         "div",
@@ -78,6 +82,7 @@ export class Workbench {
     );
 
     this.registerViewCommands();
+    this.registerSketchCommands();
     this.showView("tree");
     this.renderToolbar();
     this.renderStatus();
@@ -88,6 +93,10 @@ export class Workbench {
       this.renderStatus();
     });
     app.document.onDidChangeSelection.on(() => this.renderToolbar());
+    this.sketcher.onDidChange.on(() => {
+      this.renderToolbar();
+      this.renderStatus();
+    });
     app.onDidChangeMeshes.on((e) => {
       this.lastComputeMs = e.ms;
       this.renderStatus();
@@ -126,6 +135,38 @@ export class Workbench {
     );
   }
 
+  private registerSketchCommands(): void {
+    const c = this.app.commands;
+    const sk = this.sketcher;
+    c.register({ id: "sketch.new", title: "Yeni Eskiz…", category: "Eskiz", keybinding: "S" }, () => sk.startNew());
+    for (const plane of Object.keys(PLANES) as PlaneName[]) {
+      c.register({ id: `sketch.new.${plane}`, title: `Yeni Eskiz: ${PLANES[plane].label}`, category: "Eskiz" }, () =>
+        sk.startNew(plane),
+      );
+    }
+    c.register({ id: "sketch.edit", title: "Seçili Eskizi Düzenle", category: "Eskiz" }, () => {
+      const doc = this.app.document;
+      const sel = doc.getSelection().map((id) => doc.get(id));
+      // Ekstrüzyon / döndürme seçiliyse onun eskizini aç.
+      const target = sel.length === 1 ? (sel[0]?.type === "sketch" ? sel[0].id : sel[0]?.sketch) : undefined;
+      if (!target) throw new Error("Düzenlemek için ağaçtan bir eskiz (ya da ekstrüzyon) seçin");
+      sk.edit(target);
+    });
+    c.register({ id: "sketch.finish", title: "Eskizi Bitir", category: "Eskiz", keybinding: "Ctrl+Enter" }, () =>
+      sk.finish(),
+    );
+    const tools: [SketchTool, string][] = [
+      ["line", "L"],
+      ["rect", "R"],
+      ["circle", "C"],
+    ];
+    for (const [tool, key] of tools) {
+      c.register({ id: `sketch.tool.${tool}`, title: TOOL_LABELS[tool], category: "Eskiz", keybinding: key }, () =>
+        sk.setTool(tool),
+      );
+    }
+  }
+
   private renderToolbar(): void {
     const app = this.app;
     const tool = (
@@ -152,6 +193,30 @@ export class Workbench {
     };
     const sep = () => h("span", { class: "sep" });
     const selCount = app.document.getSelection().length;
+    const undoRedo = [
+      tool("", ICONS.undo, "edit.undo", { disabled: !app.document.canUndo, title: "Geri Al (Ctrl+Z)" }),
+      tool("", ICONS.redo, "edit.redo", { disabled: !app.document.canRedo, title: "Yinele (Ctrl+Y)" }),
+    ];
+
+    if (this.sketcher.isActive) {
+      const sketch = this.sketcher.sketch();
+      const tools = (Object.keys(TOOL_LABELS) as SketchTool[]).map((t) => {
+        const btn = tool(TOOL_LABELS[t], ICONS[t], `sketch.tool.${t}`);
+        btn.setAttribute("aria-pressed", String(this.sketcher.tool === t));
+        return btn;
+      });
+      const finish = tool("Eskizi Bitir", ICONS.check, "sketch.finish");
+      finish.classList.add("primary");
+      this.toolbar.replaceChildren(
+        ...tools,
+        sep(),
+        ...undoRedo,
+        sep(),
+        finish,
+        h("span", { class: "toolbar-title" }, `${sketch?.name ?? ""} · ${PLANES[this.sketcher.plane].label}`),
+      );
+      return;
+    }
 
     const shapes = app.primitives
       .list()
@@ -165,16 +230,21 @@ export class Workbench {
       }),
     );
     this.toolbar.replaceChildren(
-      tool("", ICONS.open, "file.open", { title: "Aç (Ctrl+O)" }),
-      tool("", ICONS.save, "file.save", { title: "Kaydet (Ctrl+S)" }),
-      sep(),
-      ...shapes,
-      sep(),
-      ...ops,
-      sep(),
-      tool("", ICONS.undo, "edit.undo", { disabled: !app.document.canUndo, title: "Geri Al (Ctrl+Z)" }),
-      tool("", ICONS.redo, "edit.redo", { disabled: !app.document.canRedo, title: "Yinele (Ctrl+Y)" }),
-      tool("", ICONS.fit, "view.fit", { title: "Görünüme Sığdır (F)" }),
+      ...compact(
+        tool("", ICONS.open, "file.open", { title: "Aç (Ctrl+O)" }),
+        tool("", ICONS.save, "file.save", { title: "Kaydet (Ctrl+S)" }),
+        sep(),
+        tool("Eskiz", ICONS.sketch, "sketch.new"),
+        tool("Ekstrüzyon", ICONS.extrude, "feature.extrude"),
+        tool("Döndürme", ICONS.revolve, "feature.revolve"),
+        shapes.length ? sep() : null,
+        ...shapes,
+        sep(),
+        ...ops,
+        sep(),
+        ...undoRedo,
+        tool("", ICONS.fit, "view.fit", { title: "Görünüme Sığdır (F)" }),
+      ),
     );
   }
 
@@ -183,6 +253,20 @@ export class Workbench {
     const roots = doc.roots();
     const triangles = roots.reduce((n, f) => n + (this.app.meshes.get(f.id)?.triangles ?? 0), 0);
     const errors = roots.filter((f) => this.app.errors.has(f.id)).length;
+    const sk = this.sketcher;
+    if (sk.isActive) {
+      const c = sk.cursor;
+      this.status.replaceChildren(
+        ...compact(
+          h("span", { class: "sketch-status" }, sk.statusText()),
+          h("span", { class: "grow" }),
+          c ? h("span", { class: "coords" }, `u ${c[0].toFixed(2)}  v ${c[1].toFixed(2)}${sk.snappedToPoint ? " · köşe" : ""}`) : null,
+          h("span", {}, `Izgara: ${sk.gridStep} mm`),
+          h("span", {}, h("kbd", {}, "Esc"), " iptal"),
+        ),
+      );
+      return;
+    }
     this.status.replaceChildren(
       ...compact(
       h("span", {}, this.app.platform.name === "tauri" ? "Masaüstü" : "Tarayıcı"),
@@ -203,8 +287,29 @@ export class Workbench {
       this.palette.open();
       return;
     }
+    const typing = isTextInput(document.activeElement);
+    if (!typing && e.key === "Escape" && this.viewport.isPickingPlane) {
+      this.viewport.cancelPlanePick();
+      return;
+    }
+    if (!typing && this.sketcher.isActive && !(e.ctrlKey || e.metaKey || e.altKey)) {
+      const keys: Record<string, () => void> = {
+        Escape: () => this.sketcher.escape(),
+        Enter: () => this.sketcher.enter(),
+        Backspace: () => this.sketcher.backspace(),
+      };
+      if (keys[e.key]) {
+        e.preventDefault();
+        keys[e.key]();
+        return;
+      }
+    }
     const id = this.app.commands.findByKeybinding(e);
     if (!id) return;
+    // Çizim aracı tuşları (L, R, C) sadece eskiz modunda anlamlı.
+    if (!this.sketcher.isActive && id.startsWith("sketch.tool.")) return;
+    // Eskiz modunda sadece eskiz, görünüm, geri al ve kaydet kısayolları çalışır (Delete eskizi silmesin).
+    if (this.sketcher.isActive && !/^(sketch\.|view\.|edit\.(undo|redo)$|file\.save)/.test(id)) return;
     // Yazı yazılırken sadece Ctrl'li genel komutlar çalışır (Ctrl+Z/A gibi metin kısayolları hariç).
     if (isTextInput(document.activeElement)) {
       const textShortcuts = new Set(["edit.undo", "edit.redo", "edit.selectAll", "edit.delete", "edit.duplicate"]);

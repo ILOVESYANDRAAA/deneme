@@ -4,13 +4,19 @@ import { SugarDocument, type FeaturePatch } from "../core/document";
 import { Emitter } from "../core/events";
 import {
   BOOLEAN_LABELS,
+  FEATURE_PARAMS,
   PrimitiveRegistry,
+  SKETCH_FEATURE_LABELS,
   clampParam,
   defaultParams,
+  featureRefs,
   featureSolid,
+  isSolidFeature,
   type Feature,
+  type ParamSpec,
   type ParamValues,
 } from "../core/features";
+import { PLANES, type PlaneName } from "../core/sketch";
 import type { BooleanOp, Solid, Vec3 } from "../core/solid";
 import type { MeshData } from "../geometry/evaluate";
 import { meshesToStl } from "../geometry/stl";
@@ -106,6 +112,7 @@ export class SugarApp implements HostServices {
     const rootIds = new Set(roots.map((f) => f.id));
     for (const id of [...this.errors.keys()]) if (!byId.has(id) || !rootIds.has(id)) this.errors.delete(id);
     for (const feature of roots) {
+      if (!isSolidFeature(feature)) continue;
       try {
         items.push({ id: feature.id, solid: featureSolid(feature, byId, this.primitives) });
       } catch (e) {
@@ -149,6 +156,50 @@ export class SugarApp implements HostServices {
     this.addBoolean(op, sel[0], sel[1]);
   }
 
+  // ---- eskiz tabanlı modelleme ----
+
+  /** Seçilen başlangıç düzleminde boş bir eskiz açar. */
+  createSketch(plane: PlaneName): Feature {
+    if (!(plane in PLANES)) throw new Error(`Bilinmeyen düzlem: ${plane}`);
+    const feature = this.document.add(
+      { type: "sketch", plane, entities: [], params: { offset: 0 } },
+      SKETCH_FEATURE_LABELS.sketch,
+    );
+    this.document.setSelection([feature.id]);
+    return feature;
+  }
+
+  /** Seçili (ya da tek kullanılmamış) eskizden ekstrüzyon / döndürme oluşturur. */
+  addSketchFeature(type: "extrude" | "revolve", sketchId?: string): Feature | null {
+    const id = sketchId ?? this.pickSketch();
+    if (!id) {
+      this.showMessage(
+        `${SKETCH_FEATURE_LABELS[type]} için önce bir eskiz seçin (ya da Eskiz ile yeni bir tane çizin)`,
+        "warning",
+      );
+      return null;
+    }
+    const feature = this.document.add(
+      {
+        type,
+        sketch: id,
+        params: Object.fromEntries(Object.entries(FEATURE_PARAMS[type]).map(([k, spec]) => [k, spec.default])),
+        ...(type === "revolve" ? { axis: "V" as const } : {}),
+      },
+      SKETCH_FEATURE_LABELS[type],
+    );
+    this.document.setSelection([feature.id]);
+    return feature;
+  }
+
+  private pickSketch(): string | undefined {
+    const free = (f: Feature | undefined) => f?.type === "sketch" && !this.document.parentOf(f.id);
+    const sel = this.document.getSelection();
+    if (sel.length === 1 && free(this.document.get(sel[0]))) return sel[0];
+    const all = this.document.all().filter(free);
+    return all.length === 1 ? all[0].id : undefined;
+  }
+
   /** Parametre değişirse eklenti şeklinin tarifi yeniden üretilir; hepsi tek bir geri alma adımıdır. */
   async updateFeature(id: string, patch: FeaturePatch): Promise<void> {
     const feature = this.document.get(id);
@@ -162,20 +213,28 @@ export class SugarApp implements HostServices {
     this.document.update(id, next);
   }
 
+  /** Özellik türünün düzenlenebilir parametreleri (yerleşik özellik ya da şekil türü). */
+  paramSpecs(type: string): Record<string, ParamSpec> | undefined {
+    return FEATURE_PARAMS[type] ?? this.primitives.get(type)?.params;
+  }
+
   private normalizeParams(type: string, params: ParamValues): ParamValues {
-    const def = this.primitives.get(type);
-    if (!def) return params;
+    const specs = this.paramSpecs(type);
+    if (!specs) return params;
     const out: ParamValues = {};
-    for (const [name, spec] of Object.entries(def.params)) out[name] = clampParam(spec, Number(params[name]));
+    for (const [name, spec] of Object.entries(specs)) out[name] = clampParam(spec, Number(params[name]));
     return out;
   }
 
   deleteSelection(): void {
-    const sel = [...this.document.getSelection()];
-    if (sel.length === 0) return;
-    // Önce boolean sonuçları silinsin ki işlenenler serbest kalsın.
-    const order = sel.sort((a, b) => Number(!!this.document.get(b)?.operands) - Number(!!this.document.get(a)?.operands));
-    for (const id of order) this.document.remove(id);
+    const remaining = new Set(this.document.getSelection());
+    // Önce girdileri kullanan özellikler (boolean, ekstrüzyon) silinsin ki girdileri serbest kalsın.
+    while (remaining.size) {
+      const next = [...remaining].find((id) => !remaining.has(this.document.parentOf(id)?.id ?? ""));
+      if (!next) break;
+      remaining.delete(next);
+      this.document.remove(next);
+    }
     this.document.setSelection([]);
   }
 
@@ -183,11 +242,12 @@ export class SugarApp implements HostServices {
     const created: string[] = [];
     for (const id of this.document.getSelection()) {
       const f = this.document.get(id);
-      if (!f || f.type === "boolean") continue;
+      if (!f || featureRefs(f).length) continue;
       const copy = this.document.add({
         type: f.type,
         params: f.params,
         ...(f.solid ? { solid: f.solid } : {}),
+        ...(f.plane ? { plane: f.plane, entities: f.entities ?? [] } : {}),
         position: [f.position[0] + 10, f.position[1] + 10, f.position[2]],
         rotation: f.rotation,
         name: `${f.name} kopya`,
@@ -195,7 +255,7 @@ export class SugarApp implements HostServices {
       created.push(copy.id);
     }
     if (created.length) this.document.setSelection(created);
-    else this.showMessage("Çoğaltmak için bir şekil seçin (boolean sonuçları henüz çoğaltılamıyor)", "warning");
+    else this.showMessage("Çoğaltmak için bir eskiz ya da şekil seçin (başka özelliğe bağlı olanlar henüz çoğaltılamıyor)", "warning");
   }
 
   // ---- dosya ----
@@ -227,7 +287,7 @@ export class SugarApp implements HostServices {
     const missing = new Set(
       this.document
         .all()
-        .filter((f) => f.type !== "boolean" && !this.primitives.get(f.type))
+        .filter((f) => !BUILTIN_TYPES.has(f.type) && !this.primitives.get(f.type))
         .map((f) => f.type),
     );
     if (missing.size) {
@@ -280,8 +340,12 @@ export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+const BUILTIN_TYPES = new Set(["boolean", "sketch", "extrude", "revolve"]);
+
+/** Eklentilerin katkıladığı şekiller için "Ekle" komutları. Yerleşik kutu/silindir/küre arayüzde gösterilmez. */
 function registerPrimitiveCommands(app: SugarApp): void {
   for (const def of app.primitives.list()) {
+    if (!def.pluginId) continue;
     const id = `shape.add.${def.type}`;
     if (app.commands.has(id)) continue;
     app.commands.register(
@@ -314,6 +378,13 @@ function registerBuiltinCommands(app: SugarApp): void {
   );
   c.register({ id: "edit.selectAll", title: "Tümünü Seç", category: "Düzen", keybinding: "Ctrl+A" }, () =>
     doc.setSelection(doc.roots().map((f) => f.id)),
+  );
+
+  c.register({ id: "feature.extrude", title: "Ekstrüzyon", category: "Katı", keybinding: "E" }, () =>
+    app.addSketchFeature("extrude"),
+  );
+  c.register({ id: "feature.revolve", title: "Döndürme", category: "Katı", keybinding: "Shift+R" }, () =>
+    app.addSketchFeature("revolve"),
   );
 
   const ops: [BooleanOp, string][] = [

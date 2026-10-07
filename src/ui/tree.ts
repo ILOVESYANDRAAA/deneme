@@ -1,9 +1,9 @@
 import type { SugarApp } from "../app/controller";
-import type { Feature } from "../core/features";
+import { featureRefs, type Feature } from "../core/features";
 import { h, icon } from "./dom";
 import { ICONS, iconForType } from "./icons";
 
-/** Sol paneldeki özellik ağacı: boolean sonuçlarının altında işlenenleri gösterilir. */
+/** Sol paneldeki özellik ağacı: her özelliğin altında girdileri (işlenenler, eskiz) gösterilir. */
 export class FeatureTree {
   readonly element: HTMLElement;
   private list: HTMLUListElement;
@@ -52,7 +52,7 @@ export class FeatureTree {
         error ? h("span", { class: "err", title: error }, icon(ICONS.error)) : null,
       );
       rows.push(row);
-      for (const id of f.operands ?? []) {
+      for (const id of featureRefs(f)) {
         const child = byId.get(id);
         if (child) add(child, depth + 1);
       }

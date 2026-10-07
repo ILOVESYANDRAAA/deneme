@@ -1,7 +1,9 @@
 import { errorText, type SugarApp } from "../app/controller";
-import { BOOLEAN_LABELS, type Feature, type ParamSpec } from "../core/features";
+import { AXIS_LABELS, BOOLEAN_LABELS, SKETCH_FEATURE_LABELS, type Feature, type ParamSpec, type RevolveAxis } from "../core/features";
+import { PLANES, describeSketch, type PlaneName } from "../core/sketch";
 import type { BooleanOp, Vec3 } from "../core/solid";
 import { formatNumber, h } from "./dom";
+import type { Sketcher } from "./sketcher";
 
 /**
  * Sağ paneldeki özellik düzenleyici. Değer, alan odağı kaybedince ya da Enter'a
@@ -14,12 +16,23 @@ export class PropertiesPanel {
   private shown: { id: string; type: string; op?: string } | null = null;
   private inputs = new Map<string, HTMLInputElement | HTMLSelectElement>();
 
-  constructor(private readonly app: SugarApp) {
+  constructor(
+    private readonly app: SugarApp,
+    private readonly sketcher: Sketcher,
+  ) {
     this.body = h("div");
     this.element = h("section", {}, h("div", { class: "panel-title" }, "Özellikler"), this.body);
     app.document.onDidChangeSelection.on(() => this.render());
     app.document.onDidChange.on(() => this.render());
     app.onDidChangeMeshes.on(() => this.render());
+    // Eskiz moduna girip çıkınca "Eskizi Düzenle / Bitir" düğmeleri değişsin (imleç hareketlerinde değil).
+    let lastActive = sketcher.activeId;
+    sketcher.onDidChange.on(() => {
+      if (sketcher.activeId === lastActive) return;
+      lastActive = sketcher.activeId;
+      this.shown = null;
+      this.render();
+    });
     this.render();
   }
 
@@ -89,8 +102,11 @@ export class PropertiesPanel {
     this.inputs.set("name", nameInput);
     form.append(this.field("Ad", nameInput));
 
+    const sketchLabel = SKETCH_FEATURE_LABELS[f.type as keyof typeof SKETCH_FEATURE_LABELS];
     const typeLabel =
-      f.type === "boolean" ? `Boolean · ${BOOLEAN_LABELS[f.op!]}` : (def?.label ?? f.type) + (def?.pluginId ? ` (eklenti: ${def.pluginId})` : "");
+      f.type === "boolean"
+        ? `Boolean · ${BOOLEAN_LABELS[f.op!]}`
+        : (sketchLabel ?? def?.label ?? f.type) + (def?.pluginId ? ` (eklenti: ${def.pluginId})` : "");
     form.append(h("div", { class: "meta" }, typeLabel));
 
     const error = app.errors.get(f.id);
@@ -109,9 +125,15 @@ export class PropertiesPanel {
       form.append(this.field("İşlem", select));
       const [a, b] = (f.operands ?? []).map((id) => app.document.get(id)?.name ?? id);
       form.append(h("div", { class: "meta" }, `İşlenenler: ${a} ve ${b}`));
-    } else if (def) {
+    } else if (app.paramSpecs(f.type)) {
+      if (f.type === "sketch") this.sketchFields(form, f);
+      if (f.type === "extrude" || f.type === "revolve") {
+        const sketch = f.sketch ? app.document.get(f.sketch) : undefined;
+        form.append(h("div", { class: "meta" }, `Eskiz: ${sketch?.name ?? "—"}`));
+      }
+      if (f.type === "revolve") this.axisField(form, f);
       form.append(h("h3", {}, "Parametreler"));
-      for (const [name, spec] of Object.entries(def.params)) {
+      for (const [name, spec] of Object.entries(app.paramSpecs(f.type)!)) {
         const input = this.numberInput(spec, f.params[name] ?? spec.default, `${spec.label}`);
         input.dataset.param = name;
         input.addEventListener("change", () => {
@@ -126,14 +148,58 @@ export class PropertiesPanel {
       form.append(h("div", { class: "meta" }, `"${f.type}" eklentisi yüklü değil; parametreler düzenlenemez.`));
     }
 
-    form.append(h("h3", {}, "Konum"), this.vec3("position", f.position, 1));
-    form.append(h("h3", {}, "Dönüş (derece)"), this.vec3("rotation", f.rotation, 15));
+    if (f.type === "sketch") {
+      const editing = this.sketcher.activeId === f.id;
+      form.append(
+        h(
+          "div",
+          { class: "btn-row" },
+          editing
+            ? h("button", { class: "btn primary", onclick: () => app.commands.run("sketch.finish") }, "Eskizi Bitir")
+            : h("button", { class: "btn", onclick: () => this.sketcher.edit(f.id) }, "Eskizi Düzenle"),
+          !app.document.parentOf(f.id) && !editing
+            ? h("button", { class: "btn primary", onclick: () => app.commands.run("feature.extrude") }, "Ekstrüzyon")
+            : null,
+          !app.document.parentOf(f.id) && !editing
+            ? h("button", { class: "btn", onclick: () => app.commands.run("feature.revolve") }, "Döndürme")
+            : null,
+        ),
+      );
+    } else {
+      form.append(h("h3", {}, "Konum"), this.vec3("position", f.position, 1));
+      form.append(h("h3", {}, "Dönüş (derece)"), this.vec3("rotation", f.rotation, 15));
+    }
 
     const mesh = app.meshes.get(f.id);
     const stats = h("div", { class: "meta", dataset: { stats: "" } }, mesh ? this.statsText(f.id) : "");
     form.append(stats);
     form.append(h("div", { class: "btn-row" }, h("button", { class: "btn danger", onclick: () => app.commands.run("edit.delete") }, "Sil")));
     this.body.replaceChildren(form);
+  }
+
+  private sketchFields(form: HTMLElement, f: Feature): void {
+    const select = h(
+      "select",
+      { attrs: { "aria-label": "Düzlem" } },
+      ...(Object.keys(PLANES) as PlaneName[]).map((p) => h("option", { value: p, selected: p === f.plane }, PLANES[p].label)),
+    );
+    select.addEventListener("change", () => this.apply(f.id, { plane: select.value as PlaneName }));
+    this.inputs.set("plane", select);
+    form.append(this.field("Düzlem", select));
+    form.append(h("div", { class: "meta", dataset: { sketchdesc: "" } }, describeSketch(f.entities ?? [])));
+  }
+
+  private axisField(form: HTMLElement, f: Feature): void {
+    const select = h(
+      "select",
+      { attrs: { "aria-label": "Eksen" } },
+      ...(Object.keys(AXIS_LABELS) as RevolveAxis[]).map((a) =>
+        h("option", { value: a, selected: a === (f.axis ?? "V") }, AXIS_LABELS[a]),
+      ),
+    );
+    select.addEventListener("change", () => this.apply(f.id, { axis: select.value as RevolveAxis }));
+    this.inputs.set("axis", select);
+    form.append(this.field("Eksen", select));
   }
 
   private statsText(id: string): string {
@@ -154,6 +220,10 @@ export class PropertiesPanel {
     };
     set("name", f.name);
     if (f.op) set("op", f.op);
+    if (f.plane) set("plane", f.plane);
+    if (f.type === "revolve") set("axis", f.axis ?? "V");
+    const desc = this.body.querySelector<HTMLElement>("[data-sketchdesc]");
+    if (desc) desc.textContent = describeSketch(f.entities ?? []);
     for (const [name, value] of Object.entries(f.params)) set(`param.${name}`, formatNumber(value));
     f.position.forEach((v, i) => set(`position.${i}`, formatNumber(v)));
     f.rotation.forEach((v, i) => set(`rotation.${i}`, formatNumber(v)));

@@ -5,6 +5,11 @@ import { RpcChannel, type Endpoint } from "./rpc";
 
 export const API_VERSION = "0.1.0";
 
+/** Tek çokgen verildiyse listeye sarar. */
+function polygonList(polygons: Vec2[] | Vec2[][]): Vec2[][] {
+  return (typeof polygons[0]?.[0] === "number" ? [polygons] : polygons) as Vec2[][];
+}
+
 function solidHelpers(): SugarCadApi["solids"] {
   const bool = (op: "union" | "subtract" | "intersect", children: Solid[]): Solid => ({
     kind: "boolean",
@@ -15,12 +20,8 @@ function solidHelpers(): SugarCadApi["solids"] {
     box: (size) => ({ kind: "box", size }),
     cylinder: (radius, height, segments) => ({ kind: "cylinder", radius, height, segments }),
     sphere: (radius, segments) => ({ kind: "sphere", radius, segments }),
-    extrude: (polygons, height) => ({
-      kind: "extrude",
-      // Tek çokgen verildiyse listeye sar.
-      polygons: (typeof polygons[0]?.[0] === "number" ? [polygons] : polygons) as Vec2[][],
-      height,
-    }),
+    extrude: (polygons, height) => ({ kind: "extrude", polygons: polygonList(polygons), height }),
+    revolve: (polygons, angle = 360) => ({ kind: "revolve", polygons: polygonList(polygons), angle }),
     union: (...s) => bool("union", s),
     subtract: (...s) => bool("subtract", s),
     intersect: (...s) => bool("intersect", s),
