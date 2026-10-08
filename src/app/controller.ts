@@ -18,6 +18,7 @@ import {
   featureRefs,
   featureSolid,
   sketchDataOf,
+  stepAssets,
   isSolidFeature,
   type Feature,
   type ParamSpec,
@@ -45,7 +46,9 @@ export interface UiBridge {
 
 /** Geometri işçisinin soyutlaması (testlerde eşzamanlı bir sahtesi kullanılır). */
 export interface GeometryEngine {
-  submit(items: { id: string; solid: Solid }[]): void;
+  submit(items: { id: string; solid: Solid }[], assets?: Record<string, string>): void;
+  /** Gövdeleri STEP dosyası olarak yazar (OpenCascade). */
+  exportStep(items: { id: string; name: string; solid: Solid }[], assets?: Record<string, string>): Promise<Uint8Array>;
   /** Bir tarifin kenar / yüz betimi (OpenCascade); seçim arayüzü için. */
   describe(solid: Solid): Promise<BrepInfo>;
   onUpdate(listener: (u: { changed: Map<string, { mesh?: MeshData; error?: string }>; removed: string[]; ms: number }) => void): void;
@@ -134,7 +137,7 @@ export class SugarApp implements HostServices {
         this.errors.set(feature.id, errorText(e));
       }
     }
-    this.geometry.submit(items);
+    this.geometry.submit(items, stepAssets(this.document.all()));
   }
 
   // ---- düzenleme ----
@@ -516,6 +519,46 @@ export class SugarApp implements HostServices {
     if (path) this.showMessage(`${sketch.name} DXF olarak kaydedildi`, "info");
   }
 
+  /** STEP metnini yeni bir "STEP Gövdesi" özelliği olarak ekler. */
+  importStepText(name: string, text: string): Feature {
+    if (!/ISO-10303-21/.test(text.slice(0, 200))) throw new Error("Bu dosya bir STEP dosyasına benzemiyor (ISO-10303-21 başlığı yok)");
+    const feature = this.document.add({ type: "stepBody", stepData: text, params: {} }, name.replace(/\.(step|stp)$/i, "") || FEATURE_LABELS.stepBody);
+    this.document.setSelection([feature.id]);
+    return feature;
+  }
+
+  async importStepFile(): Promise<void> {
+    const file = await this.platform.openTextFile({ name: "STEP", extensions: ["step", "stp"] });
+    if (!file) return;
+    const base = file.path.split(/[\\/]/).pop() ?? file.path;
+    this.importStepText(base, file.text);
+  }
+
+  /** Görünür kök gövdelerin tariflerini STEP dosyasına yazar (varsa seçili gövdeler yalnız onlar). */
+  async exportStepFile(): Promise<void> {
+    const byId = this.document.byId();
+    const roots = this.document.roots().filter((f) => isSolidFeature(f) && !f.hidden);
+    const selected = roots.filter((f) => this.document.getSelection().includes(f.id));
+    const chosen = selected.length ? selected : roots;
+    const items: { id: string; name: string; solid: Solid }[] = [];
+    for (const f of chosen) {
+      try {
+        items.push({ id: f.id, name: f.name, solid: featureSolid(f, byId, this.primitives) });
+      } catch {
+        // hatalı özellik atlanır (hatası zaten ağaçta gösterilir)
+      }
+    }
+    if (!items.length) {
+      this.showMessage("Dışa aktarılacak gövde yok", "warning");
+      return;
+    }
+    this.showMessage("STEP dosyası hazırlanıyor…", "info");
+    const data = await this.geometry.exportStep(items, stepAssets(this.document.all()));
+    const base = (this.filePath ?? "model").split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "") || "model";
+    const path = await this.platform.saveBinaryFile(data, `${base}.step`);
+    if (path) this.showMessage(`${items.length} gövde STEP olarak kaydedildi`, "info");
+  }
+
   async exportStl(): Promise<void> {
     const meshes = this.document.roots().flatMap((f) => this.meshes.get(f.id) ?? []);
     if (meshes.length === 0) {
@@ -574,6 +617,8 @@ function registerBuiltinCommands(app: SugarApp): void {
   c.register({ id: "file.saveAs", title: "Farklı Kaydet…", category: "Dosya", keybinding: "Ctrl+Shift+S" }, () =>
     app.save(true),
   );
+  c.register({ id: "file.exportStep", title: "STEP Olarak Dışa Aktar…", category: "Dosya" }, () => app.exportStepFile());
+  c.register({ id: "file.importStep", title: "STEP İçe Aktar…", category: "Dosya" }, () => app.importStepFile());
   c.register({ id: "file.exportStl", title: "STL Olarak Dışa Aktar…", category: "Dosya", keybinding: "Ctrl+E" }, () =>
     app.exportStl(),
   );

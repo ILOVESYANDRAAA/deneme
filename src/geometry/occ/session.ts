@@ -2,7 +2,7 @@ import { solidKey } from "../../core/solid";
 import type { BrepInfo } from "../brep";
 import type { MeshData } from "../evaluate";
 import type { EvaluateRequest, EvaluateResponse } from "../protocol";
-import { OccEvaluator, describeShape } from "./build";
+import { OccEvaluator, describeShape, writeStep } from "./build";
 
 /**
  * OpenCascade işçisinin durumlu çekirdeği (`GeometrySession`'ın B-rep karşılığı): sadece değişen
@@ -12,7 +12,26 @@ export class OccSession {
   private evaluator = new OccEvaluator();
   private lastKeys = new Map<string, string>();
 
+  private registerAssets(assets?: Record<string, string>): void {
+    for (const [hash, text] of Object.entries(assets ?? {})) {
+      if (!this.evaluator.hasAsset(hash)) this.evaluator.setAsset(hash, text);
+    }
+  }
+
+  /** Gövdeleri tek STEP dosyasına yazar. Bir gövde kurulamazsa hata fırlatır. */
+  async exportStep(items: { id: string; name: string; solid: Parameters<OccEvaluator["evaluate"]>[0] }[], assets?: Record<string, string>): Promise<Uint8Array> {
+    this.registerAssets(assets);
+    this.evaluator.beginPass();
+    try {
+      const shapes = items.map((i) => ({ name: i.name, shape: this.evaluator.evaluate(i.solid) }));
+      return await writeStep(shapes);
+    } finally {
+      this.evaluator.keepAll();
+    }
+  }
+
   handle(req: EvaluateRequest): { response: EvaluateResponse; transfer: ArrayBuffer[] } {
+    this.registerAssets(req.assets);
     const start = performance.now();
     const changed: EvaluateResponse["changed"] = [];
     const transfer: ArrayBuffer[] = [];

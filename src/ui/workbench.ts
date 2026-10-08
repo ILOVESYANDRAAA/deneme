@@ -558,6 +558,8 @@ export class Workbench {
       this.item("file.save", ICONS.save),
       this.item("file.saveAs"),
       { separator: true, label: "" },
+      this.item("file.importStep", ICONS.open),
+      this.item("file.exportStep", ICONS.export),
       this.item("file.exportStl", ICONS.export),
       this.item("sketch.exportDxf", ICONS.export),
       this.item("sketch.importDxf", ICONS.open, { disabled: !this.sketcher.isActive }),

@@ -43,10 +43,14 @@ export class SyncGeometry implements GeometryEngine {
     private session: GeometrySession,
     private brep?: OccSession,
   ) {}
-  submit(items: { id: string; solid: Solid }[]): void {
+  async exportStep(items: { id: string; name: string; solid: Solid }[], assets?: Record<string, string>): Promise<Uint8Array> {
+    if (!this.brep) throw new Error("OpenCascade yok");
+    return this.brep.exportStep(items, assets);
+  }
+  submit(items: { id: string; solid: Solid }[], assets?: Record<string, string>): void {
     const parts = splitItems(items);
     const responses = [this.session.handle({ type: "evaluate", seq: 0, items: parts.manifold }).response];
-    if (this.brep) responses.push(this.brep.handle({ type: "evaluate", seq: 0, items: parts.brep }).response);
+    if (this.brep) responses.push(this.brep.handle({ type: "evaluate", seq: 0, items: parts.brep, assets }).response);
     else if (parts.brep.length) throw new Error("Bu test OpenCascade gerektiriyor: SyncGeometry'ye OccSession verin");
     const live = new Set(items.map((i) => i.id));
     for (const response of responses) {

@@ -1,6 +1,6 @@
 import { PLANES, planeMatrix, type PlaneFrame, type PlaneName, type SketchEntity } from "./sketch";
 import { fromLegacyEntities, pointMap, sketchDataChain, sketchDataLoops, sketchDataProfiles, thickenChain, type SketchData } from "./sketchmodel";
-import type { BooleanOp, EdgeRef, FaceRef, Loop, Section, Solid, Vec2, Vec3 } from "./solid";
+import { textHash, type BooleanOp, type EdgeRef, type FaceRef, type Loop, type Section, type Solid, type Vec2, type Vec3 } from "./solid";
 
 /** Bir parametrenin özellik panelinde nasıl gösterileceği. */
 export interface ParamSpec {
@@ -60,6 +60,8 @@ export interface Feature {
   holes?: HolePoint[];
   /** Açılı yüzey: çekme yönü (varsayılan +Z). */
   pull?: Vec3;
+  /** İçe aktarılan STEP gövdesi: dosyanın metni. */
+  stepData?: string;
   /** Sadece 3D görünümde gizlenir; hesaplama ve dışa aktarma etkilenmez. */
   hidden?: boolean;
   /** Eklenti özellikleri için son üretilen tarif (eklenti yüklü olmasa da dosya açılabilsin diye saklanır). */
@@ -133,6 +135,7 @@ export const FEATURE_LABELS = {
   loft: "Loft",
   sweep: "Süpürme",
   rib: "Kaburga",
+  stepBody: "STEP Gövdesi",
 } as const;
 
 export type BuiltinFeatureType = keyof typeof FEATURE_LABELS;
@@ -199,6 +202,7 @@ export const FEATURE_PARAMS: Record<string, Record<string, ParamSpec>> = {
     angle: { label: "Toplam açı (°)", default: 360, min: 0.1, max: 360, step: 15 },
   },
   scale: { factor: { label: "Ölçek oranı", default: 2, min: 0.001, max: 1000, step: 0.1 } },
+  stepBody: {},
   rib: {
     thickness: { label: "Kalınlık", default: 2, min: 0.001, step: 0.5 },
     distance: { label: "Yükseklik (− ters yön)", default: 10, step: 1 },
@@ -361,6 +365,9 @@ export function featureSolid(
       const source = feature.source ? byId.get(feature.source) : undefined;
       if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
       base = bodyFeatureSolid(feature, featureSolid(source, byId, registry, visiting));
+    } else if (feature.type === "stepBody") {
+      if (!feature.stepData) throw new Error(`${feature.name}: STEP verisi yok`);
+      base = { kind: "step", hash: stepHash(feature.stepData) };
     } else if (feature.type === "hole") {
       const source = feature.source ? byId.get(feature.source) : undefined;
       if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
@@ -436,6 +443,26 @@ const MIRROR_MATRICES: Record<PlaneName, number[]> = {
   XZ: [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
   YZ: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
 };
+
+const hashMemo = new Map<string, string>();
+
+/** STEP metninin karması (büyük metin her yeniden hesaplamada tekrar taranmasın diye birkaç sonuç hatırlanır). */
+export function stepHash(text: string): string {
+  let h = hashMemo.get(text);
+  if (!h) {
+    h = textHash(text);
+    if (hashMemo.size >= 8) hashMemo.delete(hashMemo.keys().next().value as string);
+    hashMemo.set(text, h);
+  }
+  return h;
+}
+
+/** Belgedeki STEP gövdelerinin karma → metin tablosu (OpenCascade işçisine gönderilir). */
+export function stepAssets(features: readonly Feature[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of features) if (f.type === "stepBody" && f.stepData) out[stepHash(f.stepData)] = f.stepData;
+  return out;
+}
 
 /** "Boydan boya" deliklerin uzunluğu (mm). */
 const THROUGH_LENGTH = 10000;

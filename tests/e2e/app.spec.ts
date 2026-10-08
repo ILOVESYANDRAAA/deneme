@@ -953,3 +953,41 @@ test("Kütle Özellikleri: hacim, ağırlık merkezi ve malzemeye göre kütle",
   await expect(hud).toBeHidden();
   expect(errors).toEqual([]);
 });
+
+test("STEP: dışa aktar (indirme) ve geri içe aktar", async ({ page }) => {
+  test.setTimeout(90_000);
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 20]);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+
+  const [download] = await Promise.all([
+    page.waitForEvent("download", { timeout: 60_000 }),
+    page.evaluate(() => void (window as any).sugarcad.commands.run("file.exportStep")),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/\.step$/);
+  const path = await download.path();
+  const fs = await import("node:fs");
+  const text = fs.readFileSync(path!, "utf8");
+  expect(text.startsWith("ISO-10303-21;")).toBe(true);
+  expect(text).toContain("MANIFOLD_SOLID_BREP");
+
+  // Yeni belgede içe aktar: B-rep olarak gelir ve yuvarlatılabilir
+  await page.evaluate(() => (window as any).sugarcad.document.undo()); // sade bir başlangıç için (ekstrüzyonu geri al)
+  await page.evaluate((t) => (window as any).sugarcad.importStepText("parca.step", t), text);
+  const types = async () => (await features(page)).map((f: any) => f.type);
+  await expect.poll(types).toContain("stepBody");
+  const volume = () =>
+    page.evaluate(() => {
+      const app = (window as any).sugarcad;
+      const f = app.document.all().find((x: any) => x.type === "stepBody");
+      return app.meshes.get(f.id)?.volume ?? 0;
+    });
+  await expect.poll(volume, { timeout: 30_000 }).toBeCloseTo(8000, 0);
+  expect(errors).toEqual([]);
+});

@@ -65,6 +65,8 @@ export type Solid =
   | { kind: "shell"; child: Solid; thickness: number; faces: FaceRef[] }
   /** Eskiz kesitleri arasında geçiş (loft): kesitler sırayla bağlanır; `ruled` düz (yumuşatmasız) geçiştir. */
   | { kind: "loft"; sections: Section[]; ruled?: boolean }
+  /** İçe aktarılmış STEP gövdesi: veri karma (`hash`) ile anılır, içeriği OpenCascade işçisine ayrıca gönderilir. */
+  | { kind: "step"; hash: string }
   /** Kapalı `profile` kesitini açık `path` yolu boyunca süpürür. */
   | { kind: "sweep"; profile: Section; path: Section }
   /** Seçili yüzlere `angle` derece eğim verir; `pull` çekme yönüdür, nötr düzlem gövdenin çekme yönündeki en alt noktasından `neutral` kadar yukarıdadır. */
@@ -79,6 +81,7 @@ export function needsBrep(solid: Solid): boolean {
     case "draft":
     case "loft":
     case "sweep":
+    case "step":
       return true;
     case "boolean":
       return solid.children.some(needsBrep);
@@ -208,6 +211,9 @@ export function validateSolid(value: unknown, path = "solid", depth = 0): Solid 
       validateRefs(s.faces, `${path}.faces`, (r) => isVec(r.center, 3) && typeof r.kind === "string");
       validateSolid(s.child, `${path}.child`, depth + 1);
       return s as unknown as Solid;
+    case "step":
+      if (typeof s.hash !== "string" || !/^[0-9a-f]{8,64}$/.test(s.hash)) throw new Error(`${path}.hash: onaltılık karma olmalı`);
+      return s as unknown as Solid;
     case "loft":
       if (!Array.isArray(s.sections) || s.sections.length < 2 || s.sections.length > 64) throw new Error(`${path}.sections: 2-64 kesit olmalı`);
       s.sections.forEach((sec, i) => validateSection(sec, `${path}.sections[${i}]`));
@@ -226,6 +232,18 @@ export function validateSolid(value: unknown, path = "solid", depth = 0): Solid 
     default:
       throw new Error(`${path}.kind: bilinmeyen tür ${JSON.stringify(s.kind)}`);
   }
+}
+
+/** Metin için hızlı, kararlı 64 bit (iki 32 bit FNV-1a) karma; STEP gibi büyük verileri tarifte anmak için. */
+export function textHash(text: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ text.length;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ (c + i), 0x85ebca6b) >>> 0;
+  }
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
 }
 
 /** Önbellek anahtarı: aynı tarif → aynı anahtar. */

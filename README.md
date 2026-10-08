@@ -70,6 +70,8 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
   havşalı delik açar; derinlik 0 ise boydan boya. Konumlar ve ölçüler sonradan Özellikler panelinde değişir
 - **DXF:** açık eskize **DXF İçe Aktar** (çizgi, daire, yay, çoklu çizgi — kabarmalı yaylar dahil —, spline, elips, nokta);
   seçili / açık eskizi **DXF Dışa Aktar** (Dosya menüsü). Uç noktalar birleşir, çizim doğrudan ekstrüzyona hazır olur
+- **STEP:** Dosya menüsünden görünür gövdeler (ya da seçililer) **STEP olarak dışa aktarılır** (kesin yüzeyler, gövde adları);
+  **STEP içe aktarılan** gövde tam bir B-rep'tir: kenar yuvarlatma, pah, kabuk, delik, boolean uygulanabilir
 - **Kütle Özellikleri** (İNCELE): hacim, yüzey alanı, ağırlık merkezi, malzemeye göre kütle (çelik, alüminyum, ABS...) ve
   eylemsizlik momentleri
 - **Boolean işlemleri:** Birleşim, Çıkarma, Kesişim (sonuç düzenlenebilir kalır)
@@ -187,7 +189,7 @@ exports.activate = (sugarcad) => {
 
 - Ekstrüzyonda "bir sonrakine kadar" seçeneği
 - Eklenti mağazası (indir / güncelle)
-- STEP / 3MF içe ve dışa aktarma
+- 3MF içe ve dışa aktarma
 
 ## Üçüncü taraf bileşenler
 

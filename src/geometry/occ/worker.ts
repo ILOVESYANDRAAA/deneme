@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import opencascade from "replicad-opencascadejs";
 import wasmUrl from "replicad-opencascadejs/wasm?url";
-import type { DescribeRequest, EvaluateRequest, WorkerMessage } from "../protocol";
+import type { DescribeRequest, EvaluateRequest, ExportRequest, WorkerMessage } from "../protocol";
 import { installKernel } from "./build";
 import { OccSession } from "./session";
 
@@ -20,9 +20,18 @@ ready.then(
   (e) => post({ type: "fatal", error: String(e) }),
 );
 
-self.onmessage = async (event: MessageEvent<EvaluateRequest | DescribeRequest>) => {
+self.onmessage = async (event: MessageEvent<EvaluateRequest | DescribeRequest | ExportRequest>) => {
   const session = await ready;
   const msg = event.data;
+  if (msg.type === "export") {
+    try {
+      const data = await session.exportStep(msg.items, msg.assets);
+      post({ type: "exported", seq: msg.seq, data }, [data.buffer as ArrayBuffer]);
+    } catch (e) {
+      post({ type: "exported", seq: msg.seq, error: e instanceof Error ? e.message : String(e) });
+    }
+    return;
+  }
   if (msg.type === "describe") {
     try {
       const { info, transfer } = session.describe(msg.solid);

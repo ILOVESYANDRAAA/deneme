@@ -2,8 +2,10 @@ import {
   cast,
   draw,
   drawCircle,
+  exportSTEP,
   genericSweep,
   getOC,
+  isShape3D,
   loft,
   makeBaseBox,
   makeCylinder,
@@ -88,6 +90,34 @@ function profileDrawing(solid: Extract<Solid, { kind: "extrude" | "revolve" }>):
   }
   if (!acc) throw new Error("Profil boş");
   return acc;
+}
+
+/** STEP metnini (replicad'in async `importSTEP`'inin senkron karşılığı) B-rep gövdeye çevirir. */
+function importStepSync(text: string): Shape3D {
+  const oc = getOC();
+  const name = `import-${Math.random().toString(36).slice(2)}.step`;
+  oc.FS.writeFile(`/${name}`, new TextEncoder().encode(text));
+  const reader = new oc.STEPControl_Reader();
+  try {
+    if (!reader.ReadFile(name)) throw new Error("STEP dosyası okunamadı: dosya bozuk ya da desteklenmeyen bir biçimde");
+    reader.TransferRoots();
+    const raw = reader.OneShape();
+    if (raw.IsNull()) throw new Error("STEP dosyasında katı gövde yok: dosya boş ya da bozuk");
+    const shape = cast(raw);
+    if (!isSolidLike(shape)) throw new Error("STEP dosyasında katı gövde yok (yalnızca yüzey ya da tel olabilir)");
+    return shape as Shape3D;
+  } finally {
+    reader.delete();
+    try {
+      oc.FS.unlink(`/${name}`);
+    } catch {
+      // dosya zaten silinmiş
+    }
+  }
+}
+
+function isSolidLike(shape: unknown): boolean {
+  return isShape3D(shape as Parameters<typeof isShape3D>[0]);
 }
 
 /** Aynı yüzeye ait bölünmüş yüz / kenarları birleştirir (yarım yaylardan oluşan daire tek çember olur). */
@@ -255,6 +285,16 @@ function draftFaces(shape: Shape3D, faces: Face[], angle: number, pull: Vec3, ne
 export class OccEvaluator {
   private cache = new Map<string, Shape3D>();
   private used = new Set<string>();
+  /** Karma → STEP metni (tariflerdeki `step` türü için). */
+  private assets = new Map<string, string>();
+
+  setAsset(hash: string, text: string): void {
+    this.assets.set(hash, text);
+  }
+
+  hasAsset(hash: string): boolean {
+    return this.assets.has(hash);
+  }
 
   beginPass(): void {
     this.used.clear();
@@ -345,6 +385,11 @@ export class OccEvaluator {
           const what = solid.kind === "fillet" ? "Yuvarlatma" : "Pah";
           throw new Error(`${what} uygulanamadı: ${solid.kind === "fillet" ? "yarıçap" : "mesafe"} çok büyük olabilir ya da kenarlar uygun değil`, { cause: e });
         }
+      }
+      case "step": {
+        const text = this.assets.get(solid.hash);
+        if (text === undefined) throw new Error("STEP verisi bulunamadı (dosya yeniden içe aktarılmalı)");
+        return importStepSync(text);
       }
       case "loft": {
         try {
@@ -446,4 +491,10 @@ export function describeShape(shape: Shape3D): BrepInfo {
     faces: faces.map((f, i) => ({ ref: faceRefOf(f), area: areas[i] })),
     pick: { positions: new Float32Array(mesh.vertices), indices: new Uint32Array(mesh.triangles), triFace },
   };
+}
+
+/** Verilen gövdeleri (ad + şekil) tek bir STEP dosyasına yazar. */
+export function writeStep(shapes: { name: string; shape: Shape3D }[]): Promise<Uint8Array> {
+  const blob = exportSTEP(shapes.map(({ name, shape }) => ({ shape, name })) as Parameters<typeof exportSTEP>[0]);
+  return blob.arrayBuffer().then((b) => new Uint8Array(b));
 }
