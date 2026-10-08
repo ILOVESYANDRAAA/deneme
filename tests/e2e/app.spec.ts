@@ -412,6 +412,10 @@ test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitlem
   expect(bb.maxX - bb.minX).toBeCloseTo(40, 3);
   await clickSketch(page, [bb.maxX, (bb.minY + bb.maxY) / 2]);
   await editor.getByRole("textbox").fill("25");
+  // Yazarken gelen yeniden çizimler (kamera, belge olayı) kutuyu ve yazılanı bozmamalı
+  await page.evaluate(() => (window as any).sugarcadUi.sketcher.onDidChange.fire());
+  await expect(editor.getByRole("textbox")).toHaveValue("25");
+  await expect(editor.getByRole("textbox")).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.locator(".sketch-notes .note.dim")).toHaveCount(2);
 
