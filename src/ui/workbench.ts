@@ -5,6 +5,7 @@ import { PLANES, type PlaneName } from "../core/sketch";
 import { CONSTRAINT_LABELS, type GeometricConstraintType } from "../core/sketchmodel";
 import type { BooleanOp } from "../core/solid";
 import { BrepTool } from "./brep";
+import { HoleTool } from "./holetool";
 import { Notifications, showInputDialog } from "./dialogs";
 import { compact, h, icon, isTextInput } from "./dom";
 import { ExtensionsPanel } from "./extensions";
@@ -111,6 +112,7 @@ export class Workbench {
   readonly measure: MeasureTool;
   readonly section: SectionTool;
   readonly brep: BrepTool;
+  readonly hole: HoleTool;
   private palette: CommandPalette;
   private hud: SketchHud;
   readonly notes: SketchNotes;
@@ -136,6 +138,7 @@ export class Workbench {
     this.measure = new MeasureTool(this.viewport, () => this.renderAll());
     this.section = new SectionTool(this.viewport, () => this.renderAll());
     this.brep = new BrepTool(app, this.viewport, () => this.renderAll());
+    this.hole = new HoleTool(app, this.viewport, () => this.renderAll());
 
     this.panels = new PanelHost();
     this.panels.add({
@@ -206,6 +209,7 @@ export class Workbench {
         if (this.sketcher.activeId && !lastSketch) {
           this.measure.close();
           this.brep.close();
+          this.hole.close();
         }
         lastSketch = this.sketcher.activeId;
         lastTool = this.sketcher.tool;
@@ -393,9 +397,16 @@ export class Workbench {
       this.app.commands.register({ id: `feature.${type}`, title: BREP_LABELS[type], category: "Katı" }, async () => {
         if (this.sketcher.isActive) throw new Error(`${BREP_LABELS[type]} için önce eskizi bitirin`);
         this.measure.close();
+        this.hole.close();
         await this.brep.open(type);
       });
     }
+    this.app.commands.register({ id: "feature.hole", title: "Delik", category: "Katı", keybinding: "H" }, () => {
+      if (this.sketcher.isActive) throw new Error("Delik için önce eskizi bitirin");
+      this.measure.close();
+      this.brep.close();
+      this.hole.open();
+    });
   }
 
   private registerInspectCommands(): void {
@@ -403,6 +414,7 @@ export class Workbench {
     c.register({ id: "inspect.measure", title: "Ölç", category: "İncele", keybinding: "I" }, () => {
       if (this.sketcher.isActive) throw new Error("Ölçmek için önce eskizi bitirin");
       this.brep.close();
+      this.hole.close();
       this.measure.open();
       this.renderRibbon();
     });
@@ -550,12 +562,14 @@ export class Workbench {
             this.button(`boolean.${op}`, ICONS[op], { disabled: sel.length !== 2, title: `${BOOLEAN_LABELS[op]} — Ctrl ile iki gövde seçin` }),
           ),
           this.button("feature.fillet", ICONS.fillet, { disabled: !oneBody, pressed: this.brep.mode === "edges" && this.brep.isActive, title: "Yuvarlatma — seçili gövdenin kenarlarını yuvarlatır" }),
+          this.button("feature.hole", ICONS.hole, { disabled: sel.length > 1, pressed: this.hole.isActive, title: "Delik (H) — yüzeye tıklayarak basit / havşalı / konik havşalı delik açar" }),
           this.button("feature.chamfer", ICONS.chamfer, { disabled: !oneBody, title: "Pah — seçili gövdenin kenarlarını pahlar" }),
           this.button("feature.shell", ICONS.shell, { disabled: !oneBody, title: "Kabuk — seçilen yüzü açıp gövdenin içini oyar" }),
           this.button("feature.scale", ICONS.scale, { disabled: !oneBody, title: "Ölçek — seçili gövdeyi büyütür / küçültür" }),
         ],
         menu: [
           { label: "Birleştir", icon: ICONS.union, submenu: ops.map((op) => this.item(`boolean.${op}`, ICONS[op], { disabled: sel.length !== 2 })) },
+          this.item("feature.hole", ICONS.hole),
           ...(BREP_FEATURES as readonly BrepFeatureType[]).map((t) => this.item(`feature.${t}`, t === "fillet" ? ICONS.fillet : t === "chamfer" ? ICONS.chamfer : ICONS.shell, { disabled: !oneBody })),
           bodyItem("scale"),
           { separator: true, label: "" },
@@ -780,6 +794,7 @@ export class Workbench {
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     if (!typing && e.key === "Escape") {
       if (this.viewport.isPickingPlane) return this.viewport.cancelPlanePick();
+      if (this.hole.isActive) return this.hole.close();
       if (this.brep.isActive) return this.brep.close();
       if (this.measure.isActive) return this.measure.close();
       if (this.section.isActive && !this.sketcher.isActive) {

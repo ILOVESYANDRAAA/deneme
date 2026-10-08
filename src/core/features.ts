@@ -49,6 +49,9 @@ export interface Feature {
   /** Yuvarlatma / pah: seçilen kenarlar. Kabuk: açılan (kaldırılan) yüzler. Kaynak gövdenin B-rep imzaları. */
   edges?: EdgeRef[];
   faces?: FaceRef[];
+  /** Delik: türü ve konumları (yüzey noktası + dışa bakan yüzey normali). Kaynak gövdeden çıkarılır. */
+  holeType?: HoleType;
+  holes?: HolePoint[];
   /** Sadece 3D görünümde gizlenir; hesaplama ve dışa aktarma etkilenmez. */
   hidden?: boolean;
   /** Eklenti özellikleri için son üretilen tarif (eklenti yüklü olmasa da dosya açılabilsin diye saklanır). */
@@ -63,6 +66,20 @@ export interface PrimitiveDef {
   build?: (params: ParamValues) => Solid;
   pluginId?: string;
 }
+
+export type HoleType = "simple" | "counterbore" | "countersink";
+export interface HolePoint {
+  /** Deliğin gövde yüzeyindeki merkezi (dünya koordinatı). */
+  at: Vec3;
+  /** Yüzeyin dışa bakan birim normali; delik bunun tersine (malzemeye doğru) açılır. */
+  normal: Vec3;
+}
+
+export const HOLE_LABELS: Record<HoleType, string> = {
+  simple: "Basit",
+  counterbore: "Havşa (silindirik)",
+  countersink: "Konik havşa",
+};
 
 export type RevolveAxis = "U" | "V";
 export type WorldAxis = "X" | "Y" | "Z";
@@ -103,9 +120,19 @@ export const FEATURE_LABELS = {
   linearPattern: "Dikdörtgensel Desen",
   circularPattern: "Dairesel Desen",
   scale: "Ölçek",
+  hole: "Delik",
 } as const;
 
 export type BuiltinFeatureType = keyof typeof FEATURE_LABELS;
+
+/** Özellik panelinde gösterilecek parametreler (delik türüne göre ilgisizler gizlenir). */
+export function visibleParams(f: Pick<Feature, "type" | "holeType">): string[] | null {
+  if (f.type !== "hole") return null;
+  const base = ["diameter", "depth"];
+  if (f.holeType === "counterbore") return [...base, "cbDiameter", "cbDepth"];
+  if (f.holeType === "countersink") return [...base, "csDiameter", "csAngle"];
+  return base;
+}
 
 /** Kaynak gövdenin kenarlarını / yüzlerini değiştiren B-rep özellikleri (OpenCascade çekirdeği gerekir). */
 export const BREP_FEATURES = ["fillet", "chamfer", "shell"] as const;
@@ -144,6 +171,14 @@ export const FEATURE_PARAMS: Record<string, Record<string, ParamSpec>> = {
     angle: { label: "Toplam açı (°)", default: 360, min: 0.1, max: 360, step: 15 },
   },
   scale: { factor: { label: "Ölçek oranı", default: 2, min: 0.001, max: 1000, step: 0.1 } },
+  hole: {
+    diameter: { label: "Çap", default: 8, min: 0.01, step: 0.5 },
+    depth: { label: "Derinlik (0 = boydan boya)", default: 10, min: 0, step: 1 },
+    cbDiameter: { label: "Havşa çapı", default: 14, min: 0.01, step: 0.5 },
+    cbDepth: { label: "Havşa derinliği", default: 4, min: 0.01, step: 0.5 },
+    csDiameter: { label: "Konik havşa çapı", default: 14, min: 0.01, step: 0.5 },
+    csAngle: { label: "Konik havşa açısı (°)", default: 90, min: 10, max: 170, step: 5 },
+  },
   fillet: { radius: { label: "Yarıçap", default: 2, min: 0.001, step: 0.5 } },
   chamfer: { distance: { label: "Mesafe", default: 2, min: 0.001, step: 0.5 } },
   shell: { thickness: { label: "Et kalınlığı", default: 2, min: 0.001, step: 0.5 } },
@@ -286,6 +321,10 @@ export function featureSolid(
       const source = feature.source ? byId.get(feature.source) : undefined;
       if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
       base = bodyFeatureSolid(feature, featureSolid(source, byId, registry, visiting));
+    } else if (feature.type === "hole") {
+      const source = feature.source ? byId.get(feature.source) : undefined;
+      if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
+      base = holeSolid(feature, featureSolid(source, byId, registry, visiting));
     } else if (isBrepFeature(feature.type)) {
       const source = feature.source ? byId.get(feature.source) : undefined;
       if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
@@ -349,6 +388,61 @@ const MIRROR_MATRICES: Record<PlaneName, number[]> = {
   XZ: [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
   YZ: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
 };
+
+/** "Boydan boya" deliklerin uzunluğu (mm). */
+const THROUGH_LENGTH = 10000;
+/** Delik silindirinin yüzeyden dışarı taştığı pay: yüzeyde ince bir zar kalmasın. */
+const HOLE_OVERSHOOT = 0.01;
+
+/** Deliğin yarıçap–derinlik kesiti (x: yarıçap, y: yüzeyden aşağı negatif); eksen etrafında döndürülür. */
+export function holeProfile(feature: Pick<Feature, "name" | "params" | "holeType">): Vec2[] {
+  const p = feature.params;
+  const r = (p.diameter ?? 0) / 2;
+  if (!(r > 0)) throw new Error(`${feature.name}: delik çapı pozitif olmalı`);
+  const depth = p.depth > 0 ? p.depth : THROUGH_LENGTH;
+  const top = HOLE_OVERSHOOT;
+  const type = feature.holeType ?? "simple";
+  if (type === "counterbore") {
+    const R = (p.cbDiameter ?? 0) / 2;
+    if (!(R > r)) throw new Error(`${feature.name}: havşa çapı delik çapından büyük olmalı`);
+    if (!(p.cbDepth > 0 && p.cbDepth < depth)) throw new Error(`${feature.name}: havşa derinliği 0 ile delik derinliği arasında olmalı`);
+    return [[0, top], [R, top], [R, -p.cbDepth], [r, -p.cbDepth], [r, -depth], [0, -depth]];
+  }
+  if (type === "countersink") {
+    const R = (p.csDiameter ?? 0) / 2;
+    if (!(R > r)) throw new Error(`${feature.name}: konik havşa çapı delik çapından büyük olmalı`);
+    const tan = Math.tan(((p.csAngle ?? 90) / 2) * (Math.PI / 180));
+    const cone = (R - r) / tan;
+    if (!(cone < depth)) throw new Error(`${feature.name}: delik derinliği konik havşadan (${cone.toFixed(2)} mm) büyük olmalı`);
+    return [[0, top], [R + top * tan, top], [r, -cone], [r, -depth], [0, -depth]];
+  }
+  return [[0, top], [r, top], [r, -depth], [0, -depth]];
+}
+
+/** z ekseni `n` olan, `at` noktasında duran 4×4 (sütun öncelikli) yerleştirme matrisi. */
+export function placeMatrix(at: Vec3, n: Vec3): number[] {
+  const len = Math.hypot(...n) || 1;
+  const z: Vec3 = [n[0] / len, n[1] / len, n[2] / len];
+  const helper: Vec3 = Math.abs(z[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const ul = cross(helper, z);
+  const l = Math.hypot(...ul) || 1;
+  const x: Vec3 = [ul[0] / l, ul[1] / l, ul[2] / l];
+  const y = cross(z, x);
+  return [...x, 0, ...y, 0, ...z, 0, ...at, 1];
+}
+
+/** Delik: kaynak gövdeden, her konumda yerleştirilmiş delik profilinin dönel gövdesi çıkarılır. */
+function holeSolid(feature: Feature, child: Solid): Solid {
+  if (!feature.holes?.length) throw new Error(`${feature.name}: delik konumu seçilmemiş`);
+  const profile = holeProfile(feature);
+  const cutter = (h: HolePoint): Solid => ({
+    kind: "transform",
+    matrix: placeMatrix(h.at, h.normal),
+    child: { kind: "revolve", polygons: [profile], angle: 360, segments: 96, fillRule: "EvenOdd" },
+  });
+  return { kind: "boolean", op: "subtract", children: [child, ...feature.holes.map(cutter)] };
+}
 
 /** Yuvarlatma, pah, kabuk: kaynak gövdenin seçilen kenar / yüzlerine B-rep işlemi. */
 function brepFeatureSolid(feature: Feature, child: Solid): Solid {

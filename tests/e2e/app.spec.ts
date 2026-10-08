@@ -677,3 +677,58 @@ test("Yuvarlatma ve Kabuk: kenar / yüz seç, değer gir, uygula", async ({ page
   await expect.poll(async () => (await features(page)).length).toBe(3);
   expect(errors).toEqual([]);
 });
+
+test("Delik: yüzeye tıkla, tür ve ölçü gir, uygula; özellikler panelinden düzenle", async ({ page }) => {
+  test.setTimeout(60_000);
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 20]);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+
+  // Üstten bakış: gövdenin üst yüzü görünür
+  await page.evaluate(() => (window as any).sugarcadUi.viewport.setView("top"));
+  await toolbar.getByRole("button", { name: "Delik", exact: true }).click();
+  const hud = page.getByRole("dialog", { name: "Delik" });
+  await expect(hud).toBeVisible();
+  await expect(hud).toContainText("Deliğin açılacağı yüzeye tıklayın");
+  const at = await page.evaluate(() => (window as any).sugarcadUi.viewport.screenOf([20, 10, 10]));
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.click(at.x, at.y);
+  await expect(hud).toContainText("1 konum seçili");
+  const placed = await page.evaluate(() => (window as any).sugarcadUi.hole.placed);
+  expect(placed[0].normal).toEqual([0, 0, 1]);
+  expect(placed[0].at[2]).toBeCloseTo(10, 3);
+  await hud.getByLabel("Delik türü").selectOption("counterbore");
+  await hud.getByLabel("Çap", { exact: true }).fill("6");
+  await hud.getByLabel("Derinlik (0 = boydan boya)").fill("8");
+  await hud.getByLabel("Havşa çapı").fill("12");
+  await hud.getByLabel("Havşa derinliği").fill("3");
+  await page.screenshot({ path: `${S}/19-delik-hud.png` });
+  await hud.getByRole("button", { name: "Uygula" }).click();
+  await expect(hud).toBeHidden();
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude", "hole"]);
+  const volume = () =>
+    page.evaluate(() => {
+      const app = (window as any).sugarcad;
+      return app.meshes.get(app.document.all()[2].id)?.volume ?? 0;
+    });
+  await expect.poll(volume).toBeGreaterThan(0);
+  expect(await volume()).toBeCloseTo(8000 - Math.PI * (36 * 3 + 9 * 5), 0);
+  await page.screenshot({ path: `${S}/20-delik.png` });
+
+  // Özellikler panelinden havşasız basit deliğe dön ve konumu değiştir
+  await page.getByLabel("Delik türü").selectOption("simple");
+  await expect.poll(volume).toBeCloseTo(8000 - Math.PI * 9 * 8, 0);
+  await page.getByLabel("Delik 1 X").fill("10");
+  await page.getByLabel("Delik 1 X").press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).sugarcad.document.all()[2].holes[0].at[0]))
+    .toBe(10);
+  expect(errors).toEqual([]);
+});

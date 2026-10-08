@@ -5,6 +5,9 @@ import {
   DIRECTION_LABELS,
   BREP_LABELS,
   FEATURE_LABELS,
+  HOLE_LABELS,
+  visibleParams,
+  type HoleType,
   OPERATION_LABELS,
   WORLD_AXIS_LABELS,
   sketchDataOf,
@@ -106,7 +109,7 @@ export class PropertiesPanel {
   /** Formun yapısını değiştiren alanlar (değişince form yeniden kurulur). */
   private shapeKey(f: Feature): string {
     const candidates = f.operation && f.operation !== "new" ? this.app.targetCandidates(f.id).map((c) => `${c.id}:${c.name}`).join() : "";
-    return [f.op, f.operation, f.target, candidates].join("|");
+    return [f.op, f.operation, f.target, candidates, f.holeType, JSON.stringify(f.holes)].join("|");
   }
 
   private renderFeature(f: Feature): void {
@@ -167,6 +170,7 @@ export class PropertiesPanel {
       }
       if (f.edges?.length) form.append(h("div", { class: "meta" }, `${f.edges.length} kenar seçili`));
       if (f.faces?.length) form.append(h("div", { class: "meta" }, `${f.faces.length} yüz açık`));
+      if (f.type === "hole") this.holeFields(form, f);
       if (f.type === "mirror") {
         const planes = Object.fromEntries((Object.keys(PLANES) as PlaneName[]).map((p) => [p, PLANES[p].label]));
         form.append(this.selectField("plane", "Ayna düzlemi", planes, f.plane ?? "YZ", (v) => this.apply(f.id, { plane: v as PlaneName })));
@@ -177,7 +181,9 @@ export class PropertiesPanel {
         );
       }
       if (Object.keys(app.paramSpecs(f.type)!).length) form.append(h("h3", {}, "Parametreler"));
+      const shown = visibleParams(f);
       for (const [name, spec] of Object.entries(app.paramSpecs(f.type)!)) {
+        if (shown && !shown.includes(name)) continue;
         const input = this.numberInput(spec, f.params[name] ?? spec.default, `${spec.label}`);
         input.dataset.param = name;
         input.addEventListener("change", () => {
@@ -234,6 +240,32 @@ export class PropertiesPanel {
   }
 
   /** Yeni gövde / Birleştir / Kes / Kesiştir ve hedef gövde. */
+  /** Delik: tür seçimi ve her deliğin merkez koordinatları. */
+  private holeFields(form: HTMLElement, f: Feature): void {
+    form.append(
+      this.selectField("holeType", "Delik türü", HOLE_LABELS, f.holeType ?? "simple", (v) =>
+        this.apply(f.id, { holeType: v === "simple" ? undefined : (v as HoleType) }),
+      ),
+    );
+    (f.holes ?? []).forEach((hole, i) => {
+      const row = h("div", { class: "field stack" }, h("label", {}, `Delik ${i + 1} (X, Y, Z)`));
+      const xyz = h("div", { class: "vec3" });
+      (["X", "Y", "Z"] as const).forEach((axis, k) => {
+        const input = h("input", { type: "number", value: formatNumber(hole.at[k]), attrs: { "aria-label": `Delik ${i + 1} ${axis}`, step: "0.5" } }) as HTMLInputElement;
+        input.addEventListener("change", () => {
+          const v = Number(input.value);
+          const current = this.current();
+          if (!Number.isFinite(v) || !current?.holes) return;
+          const holes = current.holes.map((x, j) => (j === i ? { ...x, at: x.at.map((n, m) => (m === k ? v : n)) as Vec3 } : x));
+          this.apply(f.id, { holes });
+        });
+        xyz.append(input);
+      });
+      row.append(xyz);
+      form.append(row);
+    });
+  }
+
   private operationFields(form: HTMLElement, f: Feature): void {
     const op = f.operation ?? "new";
     form.append(

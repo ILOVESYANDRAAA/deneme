@@ -7,6 +7,8 @@ import {
   BOOLEAN_LABELS,
   BREP_LABELS,
   type BrepFeatureType,
+  type HolePoint,
+  type HoleType,
   FEATURE_LABELS,
   FEATURE_PARAMS,
   PrimitiveRegistry,
@@ -243,6 +245,23 @@ export class SugarApp implements HostServices {
     const f = this.document.get(sourceId);
     if (!f) throw new Error("Gövde bulunamadı");
     return this.geometry.describe(featureSolid(f, this.document.byId(), this.primitives));
+  }
+
+  /** Gövdeye delik(ler) açar: her konum yüzey noktası + dışa bakan normaldir. Boştaki bir katı gövde gerekir. */
+  addHoleFeature(sourceId: string, holes: HolePoint[], options: { type?: HoleType; params?: ParamValues } = {}): Feature {
+    const source = this.document.get(sourceId);
+    if (!source || !isSolidFeature(source) || this.document.parentOf(source.id)) {
+      throw new Error("Delik için boştaki bir katı gövde gerekir");
+    }
+    if (!holes.length) throw new Error("Delik konumu seçilmemiş");
+    const defaults = Object.fromEntries(Object.entries(FEATURE_PARAMS.hole).map(([k, spec]) => [k, spec.default]));
+    const params = this.normalizeParams("hole", { ...defaults, ...options.params });
+    const feature = this.document.add(
+      { type: "hole", source: sourceId, params, holes: holes.map((h) => ({ at: [...h.at], normal: [...h.normal] })), ...(options.type && options.type !== "simple" ? { holeType: options.type } : {}) },
+      FEATURE_LABELS.hole,
+    );
+    this.document.setSelection([feature.id]);
+    return feature;
   }
 
   /** Seçilen kenarları yuvarlatır / pah kırar, ya da seçilen yüzleri açarak gövdeyi oyar. */

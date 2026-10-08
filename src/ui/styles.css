@@ -1506,3 +1506,23 @@ select:focus {
   color: var(--danger);
   font-weight: 600;
 }
+
+.hole-list {
+  display: grid;
+  gap: 4px;
+}
+
+.hole-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 1fr auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.hole-row input {
+  min-width: 0;
+}
+
+.field.stack {
+  grid-template-columns: 1fr;
+}

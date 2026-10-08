@@ -342,6 +342,21 @@ export class Viewport {
     return (hit?.object.userData.featureId as string | undefined) ?? null;
   }
 
+  /** Gövde yüzeyindeki noktayı, yüzeyin dışa bakan normalini ve gövdenin özellik kimliğini döndürür (delik yerleştirme için). */
+  pickSurface(clientX: number, clientY: number, only?: string): { point: Vec3; normal: Vec3; featureId: string } | null {
+    this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
+    const meshes = this.visibleMeshes().filter((m) => !only || m.userData.featureId === only);
+    const hit = this.raycaster.intersectObjects(meshes, false).find((h) => this.unclipped(h.point));
+    if (!hit?.face) return null;
+    const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    const r = (n: number) => Number(n.toFixed(4)) + 0;
+    return {
+      point: [r(hit.point.x), r(hit.point.y), r(hit.point.z)],
+      normal: [r(normal.x), r(normal.y), r(normal.z)],
+      featureId: hit.object.userData.featureId as string,
+    };
+  }
+
   /** Işını verilen nesnelere atar (kesit düzleminin gizlediği kısımlar sayılmaz). */
   raycast(clientX: number, clientY: number, objects: THREE.Object3D[]): THREE.Intersection | null {
     this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
