@@ -52,7 +52,7 @@ export class SketchNotes {
       return;
     }
     this.element.hidden = false;
-    this.element.classList.toggle("tool-active", sk.tool !== null && sk.tool !== "dimension");
+    this.element.classList.toggle("tool-active", sk.tool !== null);
     const d = sk.data();
     const plane = sk.plane;
     const offset = sk.sketch()?.params.offset ?? 0;
