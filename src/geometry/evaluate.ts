@@ -86,6 +86,11 @@ export class SolidEvaluator {
         if (solid.translate) step(m.translate(solid.translate));
         return m === child ? child.translate([0, 0, 0]) : m;
       }
+      case "fillet":
+      case "chamfer":
+      case "shell":
+        // Bu tarifler session tarafından OpenCascade işçisine yönlendirilir; buraya gelmemeli.
+        throw new Error("Yuvarlatma / pah / kabuk için OpenCascade çekirdeği gerekir");
     }
   }
 

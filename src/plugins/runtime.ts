@@ -1,5 +1,4 @@
-import type { PluginModule, SugarCadApi, Vec2 } from "../../packages/api/sugarcad";
-import type { Solid } from "../core/solid";
+import type { PluginModule, Solid, SugarCadApi, Vec2 } from "../../packages/api/sugarcad";
 import type { PluginManifest } from "./manifest";
 import { RpcChannel, type Endpoint } from "./rpc";
 

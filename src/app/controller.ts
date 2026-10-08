@@ -5,6 +5,8 @@ import { Emitter } from "../core/events";
 import {
   BODY_FEATURES,
   BOOLEAN_LABELS,
+  BREP_LABELS,
+  type BrepFeatureType,
   FEATURE_LABELS,
   FEATURE_PARAMS,
   PrimitiveRegistry,
@@ -22,7 +24,8 @@ import {
 import { PLANES, type PlaneName } from "../core/sketch";
 import type { SketchSolver } from "../core/solver";
 import { emptySketch } from "../core/sketchmodel";
-import type { BooleanOp, Solid, Vec3 } from "../core/solid";
+import type { BooleanOp, EdgeRef, FaceRef, Solid, Vec3 } from "../core/solid";
+import type { BrepInfo } from "../geometry/brep";
 import type { MeshData } from "../geometry/evaluate";
 import { meshesToStl } from "../geometry/stl";
 import { PluginHost, type HostOptions, type HostServices, type PluginWorker } from "../plugins/host";
@@ -40,6 +43,8 @@ export interface UiBridge {
 /** Geometri işçisinin soyutlaması (testlerde eşzamanlı bir sahtesi kullanılır). */
 export interface GeometryEngine {
   submit(items: { id: string; solid: Solid }[]): void;
+  /** Bir tarifin kenar / yüz betimi (OpenCascade); seçim arayüzü için. */
+  describe(solid: Solid): Promise<BrepInfo>;
   onUpdate(listener: (u: { changed: Map<string, { mesh?: MeshData; error?: string }>; removed: string[]; ms: number }) => void): void;
 }
 
@@ -217,6 +222,42 @@ export class SugarApp implements HostServices {
         ...(type === "circularPattern" ? { worldAxis: "Z" as const } : {}),
       },
       FEATURE_LABELS[type],
+    );
+    this.document.setSelection([feature.id]);
+    return feature;
+  }
+
+  /** Yuvarlatma / pah / kabuk için kaynak olabilecek gövde: seçili tek, boşta (başka özelliğe tüketilmemiş) katı. */
+  brepSource(type: BrepFeatureType): Feature | null {
+    const sel = this.document.getSelection();
+    const source = sel.length === 1 ? this.document.get(sel[0]) : undefined;
+    if (!source || !isSolidFeature(source) || this.document.parentOf(source.id)) {
+      this.showMessage(`${BREP_LABELS[type]} için önce bir gövde seçin`, "warning");
+      return null;
+    }
+    return source;
+  }
+
+  /** Gövdenin (kaynak özelliğin) kenar / yüz betimi. */
+  async describeBody(sourceId: string): Promise<BrepInfo> {
+    const f = this.document.get(sourceId);
+    if (!f) throw new Error("Gövde bulunamadı");
+    return this.geometry.describe(featureSolid(f, this.document.byId(), this.primitives));
+  }
+
+  /** Seçilen kenarları yuvarlatır / pah kırar, ya da seçilen yüzleri açarak gövdeyi oyar. */
+  addBrepFeature(type: BrepFeatureType, sourceId: string, refs: { edges?: EdgeRef[]; faces?: FaceRef[] }, value?: number): Feature {
+    const source = this.document.get(sourceId);
+    if (!source || !isSolidFeature(source)) throw new Error(`${BREP_LABELS[type]} için gövde bulunamadı`);
+    if (type === "shell" ? !refs.faces?.length : !refs.edges?.length) {
+      throw new Error(type === "shell" ? "Açılacak en az bir yüz seçin" : "En az bir kenar seçin");
+    }
+    const params = Object.fromEntries(Object.entries(FEATURE_PARAMS[type]).map(([k, spec]) => [k, spec.default]));
+    const key = Object.keys(params)[0];
+    if (value !== undefined) params[key] = clampParam(FEATURE_PARAMS[type][key], value);
+    const feature = this.document.add(
+      { type, source: sourceId, params, ...(type === "shell" ? { faces: refs.faces } : { edges: refs.edges }) },
+      BREP_LABELS[type],
     );
     this.document.setSelection([feature.id]);
     return feature;

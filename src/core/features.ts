@@ -1,6 +1,6 @@
 import { PLANES, planeMatrix, type PlaneName, type SketchEntity } from "./sketch";
-import { fromLegacyEntities, sketchDataProfiles, type SketchData } from "./sketchmodel";
-import type { BooleanOp, Solid, Vec2, Vec3 } from "./solid";
+import { fromLegacyEntities, sketchDataLoops, sketchDataProfiles, type SketchData } from "./sketchmodel";
+import type { BooleanOp, EdgeRef, FaceRef, Loop, Solid, Vec2, Vec3 } from "./solid";
 
 /** Bir parametrenin özellik panelinde nasıl gösterileceği. */
 export interface ParamSpec {
@@ -46,6 +46,9 @@ export interface Feature {
   source?: string;
   /** Dairesel desenin döndüğü dünya ekseni. Ayna düzlemi `plane` alanındadır. */
   worldAxis?: WorldAxis;
+  /** Yuvarlatma / pah: seçilen kenarlar. Kabuk: açılan (kaldırılan) yüzler. Kaynak gövdenin B-rep imzaları. */
+  edges?: EdgeRef[];
+  faces?: FaceRef[];
   /** Sadece 3D görünümde gizlenir; hesaplama ve dışa aktarma etkilenmez. */
   hidden?: boolean;
   /** Eklenti özellikleri için son üretilen tarif (eklenti yüklü olmasa da dosya açılabilsin diye saklanır). */
@@ -104,6 +107,20 @@ export const FEATURE_LABELS = {
 
 export type BuiltinFeatureType = keyof typeof FEATURE_LABELS;
 
+/** Kaynak gövdenin kenarlarını / yüzlerini değiştiren B-rep özellikleri (OpenCascade çekirdeği gerekir). */
+export const BREP_FEATURES = ["fillet", "chamfer", "shell"] as const;
+export type BrepFeatureType = (typeof BREP_FEATURES)[number];
+
+export const BREP_LABELS: Record<BrepFeatureType, string> = {
+  fillet: "Yuvarlatma",
+  chamfer: "Pah",
+  shell: "Kabuk",
+};
+
+export function isBrepFeature(type: string): type is BrepFeatureType {
+  return (BREP_FEATURES as readonly string[]).includes(type);
+}
+
 /** Bir gövdeyi girdi alan (kopyalayan / değiştiren) özellikler. */
 export const BODY_FEATURES = ["mirror", "linearPattern", "circularPattern", "scale"] as const;
 export type BodyFeatureType = (typeof BODY_FEATURES)[number];
@@ -127,6 +144,9 @@ export const FEATURE_PARAMS: Record<string, Record<string, ParamSpec>> = {
     angle: { label: "Toplam açı (°)", default: 360, min: 0.1, max: 360, step: 15 },
   },
   scale: { factor: { label: "Ölçek oranı", default: 2, min: 0.001, max: 1000, step: 0.1 } },
+  fillet: { radius: { label: "Yarıçap", default: 2, min: 0.001, step: 0.5 } },
+  chamfer: { distance: { label: "Mesafe", default: 2, min: 0.001, step: 0.5 } },
+  shell: { thickness: { label: "Et kalınlığı", default: 2, min: 0.001, step: 0.5 } },
 };
 
 /** Bu özelliğin girdi olarak kullandığı (tükettiği) diğer özellikler. */
@@ -266,6 +286,10 @@ export function featureSolid(
       const source = feature.source ? byId.get(feature.source) : undefined;
       if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
       base = bodyFeatureSolid(feature, featureSolid(source, byId, registry, visiting));
+    } else if (isBrepFeature(feature.type)) {
+      const source = feature.source ? byId.get(feature.source) : undefined;
+      if (!source) throw new Error(`${feature.name}: kaynak gövde bulunamadı`);
+      base = brepFeatureSolid(feature, featureSolid(source, byId, registry, visiting));
     } else if (feature.type === "boolean") {
       if (!feature.op || !feature.operands) throw new Error(`${feature.name}: eksik boolean bilgisi`);
       const children = feature.operands.map((id) => {
@@ -295,14 +319,25 @@ export function sketchDataOf(f: Feature): SketchData {
   return f.sketchData ?? fromLegacyEntities(f.entities ?? []);
 }
 
-function profilesOf(feature: Feature, byId: Map<string, Feature>): { sketch: Feature; profiles: Vec2[][] } {
+function profilesOf(feature: Feature, byId: Map<string, Feature>): { sketch: Feature; profiles: Vec2[][]; loops: Loop[] } {
   const sketch = feature.sketch ? byId.get(feature.sketch) : undefined;
   if (!sketch || sketch.type !== "sketch") throw new Error(`${feature.name}: eskiz bulunamadı`);
-  const profiles = sketchDataProfiles(sketchDataOf(sketch));
+  const data = sketchDataOf(sketch);
+  const profiles = sketchDataProfiles(data);
+  const loops = sketchDataLoops(data);
   if (profiles.length === 0) {
     throw new Error(`${feature.name}: "${sketch.name}" içinde kapalı şekil yok (dikdörtgen, daire ya da kapatılmış çizgi çizin)`);
   }
-  return { sketch, profiles };
+  return { sketch, profiles, loops };
+}
+
+/** Profil eğrilerinin (kesin hâli) noktalarını dönüştürür (örn. eksen değişimi, aynalama). */
+function mapLoops(loops: Loop[], f: (p: Vec2) => Vec2): Loop[] {
+  return loops.map((l) =>
+    "circle" in l
+      ? { circle: { c: f(l.circle.c), r: l.circle.r } }
+      : { from: f(l.from), segs: l.segs.map((s) => ({ to: f(s.to), ...(s.via ? { via: f(s.via) } : {}) })) },
+  );
 }
 
 // Döndürme sonucunu (manifold: profil x → yarıçap, y → Z) eskizin yerel (u, v, n) eksenlerine taşır.
@@ -314,6 +349,27 @@ const MIRROR_MATRICES: Record<PlaneName, number[]> = {
   XZ: [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
   YZ: [-1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
 };
+
+/** Yuvarlatma, pah, kabuk: kaynak gövdenin seçilen kenar / yüzlerine B-rep işlemi. */
+function brepFeatureSolid(feature: Feature, child: Solid): Solid {
+  const p = feature.params;
+  switch (feature.type as BrepFeatureType) {
+    case "fillet":
+    case "chamfer": {
+      if (!feature.edges?.length) throw new Error(`${feature.name}: kenar seçilmemiş`);
+      const value = (feature.type === "fillet" ? p.radius : p.distance) ?? 0;
+      if (!(value > 0)) throw new Error(`${feature.name}: ${feature.type === "fillet" ? "yarıçap" : "mesafe"} pozitif olmalı`);
+      return feature.type === "fillet"
+        ? { kind: "fillet", child, radius: value, edges: feature.edges }
+        : { kind: "chamfer", child, distance: value, edges: feature.edges };
+    }
+    case "shell": {
+      if (!feature.faces?.length) throw new Error(`${feature.name}: açılacak yüz seçilmemiş`);
+      if (!(p.thickness > 0)) throw new Error(`${feature.name}: et kalınlığı pozitif olmalı`);
+      return { kind: "shell", child, thickness: p.thickness, faces: feature.faces };
+    }
+  }
+}
 
 /** Ayna, desen ve ölçek: kaynak gövdenin dönüştürülmüş kopyaları. */
 function bodyFeatureSolid(feature: Feature, child: Solid): Solid {
@@ -358,26 +414,32 @@ function bodyFeatureSolid(feature: Feature, child: Solid): Solid {
 
 /** Eskizden ekstrüzyon / döndürme katısı. Eskiz içinde iç içe şekiller delik açar. */
 function sketchFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid {
-  const { sketch, profiles } = profilesOf(feature, byId);
+  const { sketch, profiles, loops } = profilesOf(feature, byId);
   const plane = sketch.plane ?? "XY";
   if (!(plane in PLANES)) throw new Error(`${sketch.name}: bilinmeyen düzlem ${plane}`);
   let local: Solid;
   if (feature.type === "extrude") {
     const distance = feature.params.distance ?? 10;
     if (!Number.isFinite(distance) || distance === 0) throw new Error(`${feature.name}: mesafe sıfır olamaz`);
-    local = { kind: "extrude", polygons: profiles, height: Math.abs(distance), fillRule: "EvenOdd" };
+    local = { kind: "extrude", polygons: profiles, height: Math.abs(distance), fillRule: "EvenOdd", loops };
     const shift = feature.direction === "symmetric" ? -Math.abs(distance) / 2 : Math.min(0, distance);
     if (shift !== 0) local = { kind: "transform", translate: [0, 0, shift], child: local };
   } else {
     const axis = feature.axis ?? "V";
     // Manifold Y ekseni etrafında döndürür; U ekseni için profilin eksenleri yer değiştirir.
-    let polys = axis === "V" ? profiles : profiles.map((p) => p.map(([a, b]) => [b, a] as Vec2).reverse());
+    const swap = (p: Vec2): Vec2 => [p[1], p[0]];
+    const flip = (p: Vec2): Vec2 => [-p[0], p[1]];
+    let polys = axis === "V" ? profiles : profiles.map((p) => p.map(swap).reverse());
+    let exact = axis === "V" ? loops : mapLoops(loops, swap);
     // Profil tamamen eksenin öbür tarafındaysa aynala (kullanıcı hangi tarafa çizerse çizsin çalışsın).
-    if (Math.max(...polys.flat().map((p) => p[0])) <= 0) polys = polys.map((p) => p.map(([a, b]) => [-a, b] as Vec2).reverse());
+    if (Math.max(...polys.flat().map((p) => p[0])) <= 0) {
+      polys = polys.map((p) => p.map(flip).reverse());
+      exact = mapLoops(exact, flip);
+    }
     local = {
       kind: "transform",
       matrix: axis === "V" ? REVOLVE_V_TO_LOCAL : REVOLVE_U_TO_LOCAL,
-      child: { kind: "revolve", polygons: polys, angle: feature.params.angle ?? 360, segments: 96, fillRule: "EvenOdd" },
+      child: { kind: "revolve", polygons: polys, angle: feature.params.angle ?? 360, segments: 96, fillRule: "EvenOdd", loops: exact },
     };
   }
   return { kind: "transform", matrix: planeMatrix(plane, sketch.params.offset ?? 0), child: local };

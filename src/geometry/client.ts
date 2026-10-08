@@ -1,6 +1,8 @@
 import type { Solid } from "../core/solid";
+import type { BrepInfo } from "./brep";
 import type { MeshData } from "./evaluate";
-import type { EvaluateResponse, WorkerMessage } from "./protocol";
+import type { DescribeResponse, EvaluateResponse, WorkerMessage } from "./protocol";
+import { splitItems, type Item } from "./route";
 
 export interface GeometryUpdate {
   changed: Map<string, { mesh?: MeshData; error?: string }>;
@@ -9,41 +11,41 @@ export interface GeometryUpdate {
 }
 
 /**
- * Geometri işçisinin ana iş parçacığındaki ucu. Arka arkaya gelen istekleri
- * birleştirir: işçi meşgulken gelen ara istekler atlanır, sadece en sonuncusu gönderilir.
+ * Tek bir geometri işçisinin ana iş parçacığındaki ucu. Arka arkaya gelen istekleri birleştirir:
+ * işçi meşgulken gelen ara istekler atlanır, sadece en sonuncusu gönderilir.
  */
-export class GeometryClient {
+class Channel {
   private worker: Worker;
   private seq = 0;
   private busy = false;
-  private pending: { id: string; solid: Solid }[] | null = null;
-  private ready: Promise<void>;
-  private listeners = new Set<(u: GeometryUpdate) => void>();
+  private pending: Item[] | null = null;
+  readonly ready: Promise<void>;
+  private describes = new Map<number, { resolve: (i: BrepInfo) => void; reject: (e: Error) => void }>();
 
-  constructor() {
-    this.worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
+  constructor(
+    create: () => Worker,
+    private readonly onResult: (res: EvaluateResponse) => void,
+  ) {
+    this.worker = create();
     this.ready = new Promise((resolve, reject) => {
-      const onMessage = (e: MessageEvent<WorkerMessage>) => {
+      this.worker.addEventListener("message", (e: MessageEvent<WorkerMessage>) => {
         if (e.data.type === "ready") resolve();
         if (e.data.type === "fatal") reject(new Error(e.data.error));
-      };
-      this.worker.addEventListener("message", onMessage);
+      });
     });
+    this.ready.catch(() => undefined);
     this.worker.addEventListener("message", (e: MessageEvent<WorkerMessage>) => {
-      if (e.data.type === "result") this.onResult(e.data);
+      if (e.data.type === "result") {
+        this.busy = false;
+        this.onResult(e.data);
+        void this.flush();
+      } else if (e.data.type === "described") {
+        this.onDescribed(e.data);
+      }
     });
   }
 
-  whenReady(): Promise<void> {
-    return this.ready;
-  }
-
-  onUpdate(listener: (u: GeometryUpdate) => void): void {
-    this.listeners.add(listener);
-  }
-
-  /** Sahnedeki tüm kök özelliklerin güncel tarifini gönderir. */
-  submit(items: { id: string; solid: Solid }[]): void {
+  submit(items: Item[]): void {
     this.pending = items;
     void this.flush();
   }
@@ -58,11 +60,72 @@ export class GeometryClient {
     this.worker.postMessage({ type: "evaluate", seq: ++this.seq, items });
   }
 
-  private onResult(res: EvaluateResponse): void {
-    this.busy = false;
+  async describe(solid: Solid): Promise<BrepInfo> {
+    await this.ready;
+    const seq = ++this.seq;
+    return new Promise((resolve, reject) => {
+      this.describes.set(seq, { resolve, reject });
+      this.worker.postMessage({ type: "describe", seq, solid });
+    });
+  }
+
+  private onDescribed(res: DescribeResponse): void {
+    const waiter = this.describes.get(res.seq);
+    if (!waiter) return;
+    this.describes.delete(res.seq);
+    if (res.info) waiter.resolve(res.info);
+    else waiter.reject(new Error(res.error ?? "Gövde betimlenemedi"));
+  }
+}
+
+/**
+ * Geometri çekirdeklerinin ana iş parçacığındaki ucu: manifold işçisi (hızlı, her zaman açık) ve
+ * OpenCascade işçisi (yuvarlatma / pah / kabuk için; ~23 MB wasm, ilk gerektiğinde yüklenir).
+ */
+export class GeometryClient {
+  private manifold: Channel;
+  private occ: Channel | null = null;
+  private listeners = new Set<(u: GeometryUpdate) => void>();
+  /** Son gönderimdeki tüm kimlikler: bir çekirdeğin "silindi" dediği ama öbürüne geçmiş öğeler korunur. */
+  private live = new Set<string>();
+
+  constructor() {
+    this.manifold = new Channel(() => new Worker(new URL("./worker.ts", import.meta.url), { type: "module" }), (r) => this.emit(r));
+  }
+
+  whenReady(): Promise<void> {
+    return this.manifold.ready;
+  }
+
+  onUpdate(listener: (u: GeometryUpdate) => void): void {
+    this.listeners.add(listener);
+  }
+
+  private occChannel(): Channel {
+    this.occ ??= new Channel(
+      () => new Worker(new URL("./occ/worker.ts", import.meta.url), { type: "module", name: "sugarcad-occ" }),
+      (r) => this.emit(r),
+    );
+    return this.occ;
+  }
+
+  /** Sahnedeki tüm kök özelliklerin güncel tarifini gönderir. */
+  submit(items: Item[]): void {
+    this.live = new Set(items.map((i) => i.id));
+    const { manifold, brep } = splitItems(items);
+    this.manifold.submit(manifold);
+    // OpenCascade yalnızca gerektiğinde (ya da zaten açıksa, eski öğelerini temizlemek için) kullanılır.
+    if (brep.length || this.occ) this.occChannel().submit(brep);
+  }
+
+  /** Bir gövdenin kenar / yüz betimi (seçim için). OpenCascade işçisini gerekirse başlatır. */
+  describe(solid: Solid): Promise<BrepInfo> {
+    return this.occChannel().describe(solid);
+  }
+
+  private emit(res: EvaluateResponse): void {
     const changed = new Map(res.changed.map((c) => [c.id, { mesh: c.mesh, error: c.error }]));
-    const update: GeometryUpdate = { changed, removed: res.removed, ms: res.ms };
+    const update: GeometryUpdate = { changed, removed: res.removed.filter((id) => !this.live.has(id)), ms: res.ms };
     this.listeners.forEach((l) => l(update));
-    void this.flush();
   }
 }

@@ -4,6 +4,11 @@ import Module from "manifold-3d";
 import { SugarApp, type GeometryEngine, type UiBridge } from "../../src/app/controller";
 import type { Solid } from "../../src/core/solid";
 import type { MeshData } from "../../src/geometry/evaluate";
+import opencascade from "replicad-opencascadejs";
+import type { BrepInfo } from "../../src/geometry/brep";
+import { installKernel } from "../../src/geometry/occ/build";
+import { OccSession } from "../../src/geometry/occ/session";
+import { splitItems } from "../../src/geometry/route";
 import { GeometrySession } from "../../src/geometry/session";
 import type { PluginWorker } from "../../src/plugins/host";
 import type { PluginManifest, PluginSource } from "../../src/plugins/manifest";
@@ -20,16 +25,41 @@ export async function manifold() {
   return wasm;
 }
 
-/** İşçi yerine aynı iş parçacığında çalışan geometri motoru. */
+let kernelReady = false;
+
+/** OpenCascade çekirdeğini bir kez kurar; her çağrıda yeni (bağımsız) bir oturum döner. */
+export async function occ(): Promise<OccSession> {
+  if (!kernelReady) {
+    installKernel(await opencascade({}));
+    kernelReady = true;
+  }
+  return new OccSession();
+}
+
+/** İşçi yerine aynı iş parçacığında çalışan geometri motoru (B-rep için `withOcc` ile OpenCascade da). */
 export class SyncGeometry implements GeometryEngine {
   private listeners: Parameters<GeometryEngine["onUpdate"]>[0][] = [];
-  constructor(private session: GeometrySession) {}
+  constructor(
+    private session: GeometrySession,
+    private brep?: OccSession,
+  ) {}
   submit(items: { id: string; solid: Solid }[]): void {
-    const { response } = this.session.handle({ type: "evaluate", seq: 0, items });
-    const changed = new Map<string, { mesh?: MeshData; error?: string }>(
-      response.changed.map((c) => [c.id, { mesh: c.mesh, error: c.error }]),
-    );
-    this.listeners.forEach((l) => l({ changed, removed: response.removed, ms: response.ms }));
+    const parts = splitItems(items);
+    const responses = [this.session.handle({ type: "evaluate", seq: 0, items: parts.manifold }).response];
+    if (this.brep) responses.push(this.brep.handle({ type: "evaluate", seq: 0, items: parts.brep }).response);
+    else if (parts.brep.length) throw new Error("Bu test OpenCascade gerektiriyor: SyncGeometry'ye OccSession verin");
+    const live = new Set(items.map((i) => i.id));
+    for (const response of responses) {
+      const changed = new Map<string, { mesh?: MeshData; error?: string }>(
+        response.changed.map((c) => [c.id, { mesh: c.mesh, error: c.error }]),
+      );
+      const removed = response.removed.filter((id) => !live.has(id));
+      this.listeners.forEach((l) => l({ changed, removed, ms: response.ms }));
+    }
+  }
+  async describe(solid: Solid): Promise<BrepInfo> {
+    if (!this.brep) throw new Error("OpenCascade yok");
+    return this.brep.describe(solid).info;
   }
   onUpdate(listener: Parameters<GeometryEngine["onUpdate"]>[0]): void {
     this.listeners.push(listener);
@@ -60,9 +90,9 @@ export class FakeUi implements UiBridge {
   }
 }
 
-export async function createApp(options?: { activateTimeoutMs?: number; buildTimeoutMs?: number }) {
+export async function createApp(options?: { activateTimeoutMs?: number; buildTimeoutMs?: number; brep?: boolean }) {
   const ui = new FakeUi();
-  const geometry = new SyncGeometry(new GeometrySession(await manifold()));
+  const geometry = new SyncGeometry(new GeometrySession(await manifold()), options?.brep ? await occ() : undefined);
   const app = new SugarApp(new BrowserPlatform(), ui, geometry, inMemoryWorker, options);
   return { app, ui };
 }

@@ -7,7 +7,7 @@
  * çözmek `solver.ts`'in işidir; buradaki her şey eşzamanlı ve saf geometridir.
  */
 import { arcGeometry, circleFrom3, findLoops, type SketchEntity } from "./sketch";
-import type { Vec2 } from "./solid";
+import type { Loop, Vec2 } from "./solid";
 
 export interface SPoint {
   id: string;
@@ -290,6 +290,123 @@ export function sketchDataProfiles(d: SketchData): Vec2[][] {
     } else if (points.length >= 2) open.push(points);
   }
   return [...closed, ...findLoops(open)];
+}
+
+
+const JOIN = 1e-6;
+
+interface ExactEdge {
+  /** Köşe noktaları (n + 1) ve aralarındaki yay orta noktaları (n; düz çizgide undefined). */
+  pts: Vec2[];
+  vias: (Vec2 | undefined)[];
+}
+
+function reversedEdge(e: ExactEdge): ExactEdge {
+  return { pts: [...e.pts].reverse(), vias: [...e.vias].reverse() };
+}
+
+/** Eğriyi kesin kenara çevirir; çizgi ve yay dışındakiler (açık eğri) örneklenmiş çizgilerle yaklaşılır. */
+function exactEdge(pm: Map<string, Vec2>, c: SCurve): ExactEdge | null {
+  const P = (id: string): Vec2 => pm.get(id) ?? [0, 0];
+  if (c.kind === "line") return { pts: [P(c.p1), P(c.p2)], vias: [undefined] };
+  if (c.kind === "arc") {
+    const g = arcInfo(P(c.c), P(c.s), P(c.e));
+    const mid = g.a0 + g.sweep / 2;
+    return { pts: [P(c.s), P(c.e)], vias: [[g.c[0] + g.r * Math.cos(mid), g.c[1] + g.r * Math.sin(mid)]] };
+  }
+  if (c.kind === "spline" && !c.closed) {
+    const { points } = curvePath(pm, c);
+    return { pts: points, vias: points.slice(1).map(() => undefined) };
+  }
+  return null;
+}
+
+/**
+ * Kapalı profillerin kesin hâli (çizgi + yay + daire). `sketchDataProfiles` ile aynı şekilleri bulur
+ * ama eğrileri örneklemez; elips ve kapalı eğri gibi serbest şekiller çokgen olarak gelir.
+ */
+export function sketchDataLoops(d: SketchData): Loop[] {
+  const pm = pointMap(d);
+  const loops: Loop[] = [];
+  const edges: ExactEdge[] = [];
+  for (const c of d.curves) {
+    if (c.construction || c.kind === "point") continue;
+    if (c.kind === "circle") {
+      if (c.r > EPS) loops.push({ circle: { c: pm.get(c.c) ?? [0, 0], r: c.r } });
+      continue;
+    }
+    const exact = exactEdge(pm, c);
+    if (exact) {
+      edges.push(exact);
+      continue;
+    }
+    const { points, closed } = curvePath(pm, c);
+    if (closed && points.length >= 3) loops.push({ from: points[0], segs: [...points.slice(1), points[0]].map((to) => ({ to })) });
+  }
+  const near = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= JOIN;
+  const nodes: Vec2[] = [];
+  const nodeOf = (p: Vec2): number => {
+    const i = nodes.findIndex((n) => near(n, p));
+    if (i >= 0) return i;
+    nodes.push(p);
+    return nodes.length - 1;
+  };
+  const list = edges.map((e) => ({ e, a: nodeOf(e.pts[0]), b: nodeOf(e.pts[e.pts.length - 1]), alive: true }));
+  const emit = (chain: ExactEdge[]) => {
+    const segs: { to: Vec2; via?: Vec2 }[] = [];
+    for (const e of chain) {
+      for (let i = 0; i < e.vias.length; i++) segs.push({ to: e.pts[i + 1], ...(e.vias[i] ? { via: e.vias[i] } : {}) });
+    }
+    // Son nokta ilk noktaya birebir otursun.
+    segs[segs.length - 1] = { ...segs[segs.length - 1], to: chain[0].pts[0] };
+    if (segs.length >= 2) loops.push({ from: chain[0].pts[0], segs });
+  };
+  // Kendi üstüne kapanan tek yol.
+  for (const it of list) {
+    if (it.a === it.b) {
+      it.alive = false;
+      if (it.e.pts.length >= 4) emit([it.e]);
+    }
+  }
+  // Dallanmadan kalan ölü uçları ayıkla.
+  for (let changed = true; changed; ) {
+    changed = false;
+    const degree = new Map<number, number>();
+    for (const it of list) {
+      if (!it.alive) continue;
+      degree.set(it.a, (degree.get(it.a) ?? 0) + 1);
+      degree.set(it.b, (degree.get(it.b) ?? 0) + 1);
+    }
+    for (const it of list) {
+      if (it.alive && ((degree.get(it.a) ?? 0) < 2 || (degree.get(it.b) ?? 0) < 2)) {
+        it.alive = false;
+        changed = true;
+      }
+    }
+  }
+  const used = new Set<number>();
+  for (let s = 0; s < list.length; s++) {
+    if (!list[s].alive || used.has(s)) continue;
+    used.add(s);
+    const chainNodes = [list[s].a];
+    const chain: { i: number; reversed: boolean }[] = [{ i: s, reversed: false }];
+    let at = list[s].b;
+    for (let guard = 0; guard < list.length + 1; guard++) {
+      const seen = chainNodes.indexOf(at);
+      if (seen >= 0) {
+        emit(chain.slice(seen).map(({ i, reversed }) => (reversed ? reversedEdge(list[i].e) : list[i].e)));
+        break;
+      }
+      chainNodes.push(at);
+      const next = list.findIndex((it, i) => it.alive && !used.has(i) && (it.a === at || it.b === at));
+      if (next < 0) break;
+      used.add(next);
+      const reversed = list[next].b === at;
+      chain.push({ i: next, reversed });
+      at = reversed ? list[next].a : list[next].b;
+    }
+  }
+  return loops;
 }
 
 /** Ekranda çizim için her eğrinin parçaları. */
