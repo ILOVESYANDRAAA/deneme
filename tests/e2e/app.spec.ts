@@ -927,3 +927,29 @@ test("Açılı düzlem ve 3 noktalı düzlemde eskiz", async ({ page }) => {
   expect(frame2).toEqual({ origin: [0, 0, 5], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
   expect(errors).toEqual([]);
 });
+
+test("Kütle Özellikleri: hacim, ağırlık merkezi ve malzemeye göre kütle", async ({ page }) => {
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 20]);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+  await toolbar.getByRole("button", { name: "Kütle Özellikleri" }).click();
+  const hud = page.getByRole("dialog", { name: "Kütle Özellikleri" });
+  await expect(hud).toBeVisible();
+  await expect(hud.locator("[data-mass=volume] strong")).toContainText("8000 mm³");
+  await expect(hud.locator("[data-mass=area] strong")).toContainText("2800 mm²");
+  await expect(hud.locator("[data-mass=centroid] strong")).toContainText("(20, 10, 5)");
+  await expect(hud.locator("[data-mass=mass] strong")).toContainText("62.8 g"); // 8 cm³ × 7,85 g/cm³
+  await hud.getByLabel("Malzeme").selectOption("aluminum");
+  await expect(hud.locator("[data-mass=mass] strong")).toContainText("21.6 g");
+  await page.screenshot({ path: `${S}/24-kutle.png` });
+  await page.keyboard.press("Escape");
+  await expect(hud).toBeHidden();
+  expect(errors).toEqual([]);
+});

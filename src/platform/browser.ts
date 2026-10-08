@@ -1,5 +1,5 @@
 import type { PluginSource } from "../plugins/manifest";
-import type { AvailableUpdate, Platform } from "./adapter";
+import type { AvailableUpdate, FileFilter, Platform } from "./adapter";
 
 function download(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
@@ -14,11 +14,11 @@ function download(blob: Blob, name: string): void {
 export class BrowserPlatform implements Platform {
   readonly name = "browser" as const;
 
-  openTextFile(): Promise<{ path: string; text: string } | null> {
+  openTextFile(filter?: FileFilter): Promise<{ path: string; text: string } | null> {
     return new Promise((resolve) => {
       const input = document.createElement("input");
       input.type = "file";
-      input.accept = ".sugar,application/json";
+      input.accept = filter ? filter.extensions.map((e) => `.${e}`).join(",") : ".sugar,application/json";
       input.addEventListener("change", async () => {
         const file = input.files?.[0];
         resolve(file ? { path: file.name, text: await file.text() } : null);

@@ -3,8 +3,8 @@ import type { PluginSource } from "../plugins/manifest";
 /** Arayüzün işletim sistemine eriştiği tek kapı (Tauri ya da tarayıcı). */
 export interface Platform {
   readonly name: "tauri" | "browser";
-  /** Dosya seçtirir ve okur; iptalde null. */
-  openTextFile(): Promise<{ path: string; text: string } | null>;
+  /** Dosya seçtirir ve okur; iptalde null. `filter` verilmezse .sugar dosyaları gösterilir. */
+  openTextFile(filter?: FileFilter): Promise<{ path: string; text: string } | null>;
   /** `path` verilmezse kaydetme penceresi açar. Kaydedilen yolu ya da iptalde null döner. */
   saveTextFile(text: string, path?: string): Promise<string | null>;
   saveBinaryFile(data: Uint8Array, defaultName: string): Promise<string | null>;
@@ -16,6 +16,12 @@ export interface Platform {
   appVersion(): Promise<string>;
   /** Yayınlanmış daha yeni bir sürüm varsa onu döndürür (sadece masaüstü). */
   checkForUpdate(): Promise<AvailableUpdate | null>;
+}
+
+export interface FileFilter {
+  name: string;
+  /** Noktasız uzantılar: ["dxf"]. */
+  extensions: string[];
 }
 
 export interface AvailableUpdate {

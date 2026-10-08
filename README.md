@@ -68,6 +68,10 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
 - **Açılı Yüzey:** OpenCascade ile seçili yüzlere kalıp açısı verir (çekme yönü ve nötr düzlem ayarlı)
 - **Delik** (`H`): gövde yüzeyine tıklayarak (birden çok konum seçilebilir) basit, silindirik havşalı ya da konik
   havşalı delik açar; derinlik 0 ise boydan boya. Konumlar ve ölçüler sonradan Özellikler panelinde değişir
+- **DXF:** açık eskize **DXF İçe Aktar** (çizgi, daire, yay, çoklu çizgi — kabarmalı yaylar dahil —, spline, elips, nokta);
+  seçili / açık eskizi **DXF Dışa Aktar** (Dosya menüsü). Uç noktalar birleşir, çizim doğrudan ekstrüzyona hazır olur
+- **Kütle Özellikleri** (İNCELE): hacim, yüzey alanı, ağırlık merkezi, malzemeye göre kütle (çelik, alüminyum, ABS...) ve
+  eylemsizlik momentleri
 - **Boolean işlemleri:** Birleşim, Çıkarma, Kesişim (sonuç düzenlenebilir kalır)
 - **İncele:** **Ölç** (iki nokta arası mesafe ve ΔX/ΔY/ΔZ, köşelere yapışır), **Kesit Analizi**
 - Gövde / eskiz gizleme (göz simgesi ya da `V`), parametrik özellik ağacı, geri al / yinele

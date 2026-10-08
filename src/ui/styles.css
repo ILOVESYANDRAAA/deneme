@@ -1526,3 +1526,14 @@ select:focus {
 .field.stack {
   grid-template-columns: 1fr;
 }
+
+.mass-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mass-row strong {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}

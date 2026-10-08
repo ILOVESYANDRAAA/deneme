@@ -25,7 +25,8 @@ import {
 } from "../core/features";
 import { PLANES, type PlaneRef } from "../core/sketch";
 import type { SketchSolver } from "../core/solver";
-import { emptySketch, sketchDataChain, sketchDataLoops } from "../core/sketchmodel";
+import { importDxf, sketchToDxf, type DxfImportResult } from "../core/dxf";
+import { SketchEdit, emptySketch, sketchDataChain, sketchDataLoops } from "../core/sketchmodel";
 import type { BooleanOp, EdgeRef, FaceRef, Solid, Vec3 } from "../core/solid";
 import type { BrepInfo } from "../geometry/brep";
 import type { MeshData } from "../geometry/evaluate";
@@ -486,6 +487,33 @@ export class SugarApp implements HostServices {
     this.document.dirty = false;
     this.setFile(path);
     this.showMessage(`Kaydedildi: ${path}`, "info");
+  }
+
+  /** DXF metnini `sketchId` eskizine ekler (çözücüyle bağlantıları yeniden çözülür). */
+  importDxfInto(sketchId: string, text: string): DxfImportResult {
+    const sketch = this.document.get(sketchId);
+    if (!sketch || sketch.type !== "sketch") throw new Error("DXF içe aktarmak için bir eskiz gerekir");
+    const ed = new SketchEdit(sketchDataOf(sketch));
+    const result = importDxf(text, ed);
+    if (!result.added) throw new Error("DXF dosyasında içe aktarılabilir çizim öğesi (çizgi, daire, yay, çoklu çizgi...) bulunamadı");
+    this.document.update(sketchId, { sketchData: ed.result() });
+    return result;
+  }
+
+  async importDxfFile(sketchId: string): Promise<void> {
+    const file = await this.platform.openTextFile({ name: "DXF", extensions: ["dxf"] });
+    if (!file) return;
+    const r = this.importDxfInto(sketchId, file.text);
+    const skipped = Object.entries(r.skipped).map(([k, n]) => `${k} ×${n}`).join(", ");
+    this.showMessage(`${r.added} öğe içe aktarıldı${skipped ? ` (atlanan: ${skipped})` : ""}`, skipped ? "warning" : "info");
+  }
+
+  async exportDxfFile(sketchId: string): Promise<void> {
+    const sketch = this.document.get(sketchId);
+    if (!sketch || sketch.type !== "sketch") throw new Error("DXF dışa aktarmak için bir eskiz seçin");
+    const text = sketchToDxf(sketchDataOf(sketch));
+    const path = await this.platform.saveBinaryFile(new TextEncoder().encode(text), `${sketch.name}.dxf`);
+    if (path) this.showMessage(`${sketch.name} DXF olarak kaydedildi`, "info");
   }
 
   async exportStl(): Promise<void> {

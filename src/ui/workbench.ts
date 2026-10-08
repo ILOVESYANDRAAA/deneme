@@ -8,6 +8,7 @@ import { BrepTool } from "./brep";
 import { FaceSketchTool } from "./facesketch";
 import { HoleTool } from "./holetool";
 import { Notifications, showInputDialog } from "./dialogs";
+import { MassPropertiesTool } from "./massdialog";
 import { ThreePointPlaneTool } from "./pointsplane";
 import { compact, h, icon, isTextInput } from "./dom";
 import { ExtensionsPanel } from "./extensions";
@@ -117,6 +118,7 @@ export class Workbench {
   readonly hole: HoleTool;
   readonly faceSketch: FaceSketchTool;
   readonly planePoints: ThreePointPlaneTool;
+  readonly mass: MassPropertiesTool;
   private palette: CommandPalette;
   private hud: SketchHud;
   readonly notes: SketchNotes;
@@ -144,6 +146,7 @@ export class Workbench {
     this.brep = new BrepTool(app, this.viewport, () => this.renderAll());
     this.hole = new HoleTool(app, this.viewport, () => this.renderAll());
     this.faceSketch = new FaceSketchTool(app, this.viewport, this.sketcher, () => this.renderAll());
+    this.mass = new MassPropertiesTool(app, this.viewport, () => this.renderAll());
     this.planePoints = new ThreePointPlaneTool(app, this.viewport, this.sketcher, () => this.renderAll());
 
     this.panels = new PanelHost();
@@ -432,6 +435,17 @@ export class Workbench {
       const sketch = this.app.createSketch(angledFrame(String(v.base) as PlaneName, v.axis === "V" ? "V" : "U", Number(v.angle)), Number(v.offset));
       this.sketcher.edit(sketch.id);
     });
+    this.app.commands.register({ id: "sketch.importDxf", title: "DXF İçe Aktar (eskize)…", category: "Eskiz" }, async () => {
+      const id = this.sketcher.activeId;
+      if (!id) throw new Error("DXF içe aktarmak için önce bir eskiz açın");
+      await this.app.importDxfFile(id);
+    });
+    this.app.commands.register({ id: "sketch.exportDxf", title: "DXF Dışa Aktar (eskiz)…", category: "Eskiz" }, async () => {
+      const doc = this.app.document;
+      const id = this.sketcher.activeId ?? doc.getSelection().find((i) => doc.get(i)?.type === "sketch");
+      if (!id) throw new Error("DXF dışa aktarmak için bir eskiz açın ya da seçin");
+      await this.app.exportDxfFile(id);
+    });
     this.app.commands.register({ id: "sketch.new3pt", title: "3 Noktalı Düzlemde Eskiz", category: "Eskiz" }, () => {
       if (this.sketcher.isActive) throw new Error("Önce mevcut eskizi bitirin");
       closeTools();
@@ -459,7 +473,17 @@ export class Workbench {
       if (this.sketcher.isActive) throw new Error("Ölçmek için önce eskizi bitirin");
       this.brep.close();
       this.hole.close();
+      this.mass.close();
       this.measure.open();
+      this.renderRibbon();
+    });
+    c.register({ id: "inspect.mass", title: "Kütle Özellikleri", category: "İncele" }, () => {
+      if (this.sketcher.isActive) throw new Error("Kütle özellikleri için önce eskizi bitirin");
+      if (this.mass.isActive) this.mass.close();
+      else {
+        this.measure.close();
+        this.mass.open();
+      }
       this.renderRibbon();
     });
     c.register({ id: "inspect.section", title: "Kesit Analizi", category: "İncele" }, () => {
@@ -535,6 +559,8 @@ export class Workbench {
       this.item("file.saveAs"),
       { separator: true, label: "" },
       this.item("file.exportStl", ICONS.export),
+      this.item("sketch.exportDxf", ICONS.export),
+      this.item("sketch.importDxf", ICONS.open, { disabled: !this.sketcher.isActive }),
       { separator: true, label: "" },
       this.item("view.theme", undefined, { checked: this.viewport.currentTheme === "dark", label: "Koyu tema" }),
       this.item("view.resetLayout"),
@@ -652,9 +678,10 @@ export class Workbench {
         label: "İNCELE",
         buttons: [
           this.button("inspect.measure", ICONS.measure, { pressed: this.measure.isActive, title: "Ölç (I) — iki nokta arası mesafe" }),
+          this.button("inspect.mass", ICONS.mass, { pressed: this.mass.isActive, title: "Kütle Özellikleri — hacim, yüzey alanı, ağırlık merkezi, kütle ve eylemsizlik" }),
           this.button("inspect.section", ICONS.section, { pressed: this.section.isActive, title: "Kesit Analizi — modeli bir düzlemle keser" }),
         ],
-        menu: [this.item("inspect.measure", ICONS.measure), this.item("inspect.section", ICONS.section, { checked: this.section.isActive })],
+        menu: [this.item("inspect.measure", ICONS.measure), this.item("inspect.mass", ICONS.mass, { checked: this.mass.isActive }), this.item("inspect.section", ICONS.section, { checked: this.section.isActive })],
       },
     ];
   }
@@ -853,6 +880,7 @@ export class Workbench {
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     if (!typing && e.key === "Escape") {
       if (this.viewport.isPickingPlane) return this.viewport.cancelPlanePick();
+      if (this.mass.isActive) return this.mass.close();
       if (this.planePoints.isActive) return this.planePoints.close();
       if (this.faceSketch.isActive) return this.faceSketch.close();
       if (this.hole.isActive) return this.hole.close();

@@ -5,7 +5,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import type { PluginManifest, PluginSource } from "../plugins/manifest";
-import type { AvailableUpdate, Platform } from "./adapter";
+import type { AvailableUpdate, FileFilter, Platform } from "./adapter";
 
 const SUGAR_FILTER = [{ name: "sugarCAD çizimi", extensions: ["sugar"] }];
 
@@ -19,8 +19,8 @@ interface RawPlugin {
 export class TauriPlatform implements Platform {
   readonly name = "tauri" as const;
 
-  async openTextFile(): Promise<{ path: string; text: string } | null> {
-    const path = await open({ multiple: false, directory: false, filters: SUGAR_FILTER });
+  async openTextFile(filter?: FileFilter): Promise<{ path: string; text: string } | null> {
+    const path = await open({ multiple: false, directory: false, filters: filter ? [filter] : SUGAR_FILTER });
     if (typeof path !== "string") return null;
     const text = await invoke<string>("read_text_file", { path });
     return { path, text };
