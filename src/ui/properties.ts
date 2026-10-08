@@ -111,7 +111,7 @@ export class PropertiesPanel {
   /** Formun yapısını değiştiren alanlar (değişince form yeniden kurulur). */
   private shapeKey(f: Feature): string {
     const candidates = f.operation && f.operation !== "new" ? this.app.targetCandidates(f.id).map((c) => `${c.id}:${c.name}`).join() : "";
-    return [f.op, f.operation, f.target, candidates, f.holeType, JSON.stringify(f.holes)].join("|");
+    return [f.op, f.operation, f.target, candidates, f.holeType, JSON.stringify(f.holes), JSON.stringify(f.exprs)].join("|");
   }
 
   private renderFeature(f: Feature): void {
@@ -204,7 +204,33 @@ export class PropertiesPanel {
           this.apply(f.id, { params: { [name]: value } });
         });
         this.inputs.set(`param.${name}`, input);
-        form.append(this.field(spec.label, input));
+        // ƒ: sayı yerine parametre ifadesi ("genislik / 2") yazmak için. İfadeli değer salt okunurdur.
+        const expr = f.exprs?.[name];
+        if (expr) {
+          input.readOnly = true;
+          input.title = `= ${expr}`;
+        }
+        const fld = this.field(spec.label, input);
+        fld.classList.add("has-expr");
+        fld.append(
+          h(
+            "button",
+            {
+              class: `fpanel-btn expr-btn${expr ? " on" : ""}`,
+              title: expr ? `İfade: ${expr} (değiştirmek için tıklayın)` : "İfade yaz: parametre adlarıyla hesaplanan değer",
+              attrs: { "aria-label": `İfade yaz: ${name}` },
+              onclick: async () => {
+                const v = await app.showInput({
+                  title: `${spec.label}: değer ya da ifade`,
+                  fields: [{ name: "expr", label: "Sayı ya da ifade (örn. genislik / 2)", type: "text", value: this.current()?.exprs?.[name] ?? formatNumber(this.current()?.params[name] ?? 0) }],
+                });
+                if (v) await app.setFeatureParam(f.id, name, String(v.expr)).catch((e) => app.showMessage(errorText(e), "error"));
+              },
+            },
+            "ƒ",
+          ),
+        );
+        form.append(fld);
       }
     } else {
       form.append(h("div", { class: "meta" }, `"${f.type}" eklentisi yüklü değil; parametreler düzenlenemez.`));

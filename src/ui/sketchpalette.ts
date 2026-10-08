@@ -140,10 +140,12 @@ export class SketchPalette {
     this.dimensions.replaceChildren(
       ...(dims.length
         ? dims.map((k) => {
-            const input = h("input", { type: "number", value: String(k.value ?? 0), attrs: { "aria-label": `${CONSTRAINT_LABELS[k.type]} ${nameOf(k.refs[0])}` } });
-            input.step = "any";
+            // Metin kutusu: sayı ya da parametre ifadesi ("genislik / 2") yazılabilir.
+            const shown = () => k.expr ?? String(Number((k.value ?? 0).toFixed(4)));
+            const input = h("input", { type: "text", value: shown(), title: k.expr ? `= ${k.value}` : "", attrs: { inputmode: "decimal", spellcheck: "false", "aria-label": `${CONSTRAINT_LABELS[k.type]} ${nameOf(k.refs[0])}` } });
+            input.addEventListener("keydown", (e) => e.stopPropagation());
             input.addEventListener("change", () => {
-              if (!sk.setDimensionValue(k.id, Number(input.value))) input.value = String(k.value ?? 0);
+              if (!sk.setDimensionText(k.id, input.value)) input.value = shown();
             });
             return h(
               "div",

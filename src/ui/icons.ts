@@ -16,6 +16,7 @@ export const ICONS = {
   redo: svg('<path d="m10.5 3 3 3-3 3"/><path d="M13.5 6H6a3.5 3.5 0 0 0 0 7h4"/>'),
   fit: svg('<path d="M2 5.5V2h3.5M14 5.5V2h-3.5M2 10.5V14h3.5M14 10.5V14h-3.5"/><rect x="5.5" y="5.5" width="5" height="5"/>'),
   tree: svg('<path d="M3 2.5h4M5 2.5v11M5 7.5h4.5M5 13h4.5"/><rect x="9.5" y="5.5" width="4" height="4" rx=".5"/><rect x="9.5" y="11" width="4" height="4" rx=".5"/>'),
+  parameters: svg('<path d="M3 3.5h10M3 8h10M3 12.5h10"/><path d="M5.5 2v3M10.5 6.5v3M7 11v3" /><circle cx="5.5" cy="3.5" r="1" fill="currentColor"/><circle cx="10.5" cy="8" r="1" fill="currentColor"/><circle cx="7" cy="12.5" r="1" fill="currentColor"/>'),
   extensions: svg('<rect x="2" y="2" width="5" height="5" rx=".5"/><rect x="2" y="9" width="5" height="5" rx=".5"/><rect x="9" y="9" width="5" height="5" rx=".5"/><rect x="9.5" y="1.5" width="5" height="5" rx=".5" transform="rotate(12 12 4)"/>'),
   palette: svg('<path d="M4 6l3 2-3 2M8.5 11H12"/><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>'),
   properties: svg('<rect x="2" y="2" width="12" height="12" rx="1.5"/><path d="M4.5 5.5h7M4.5 8h7M4.5 10.5h4"/>'),

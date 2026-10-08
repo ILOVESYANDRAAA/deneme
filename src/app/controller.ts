@@ -27,6 +27,7 @@ import {
 import { PLANES, type PlaneRef } from "../core/sketch";
 import type { SketchSolver } from "../core/solver";
 import { importDxf, sketchToDxf, type DxfImportResult } from "../core/dxf";
+import { evaluateExpression, evaluateInput } from "../core/expr";
 import { SketchEdit, emptySketch, sketchDataChain, sketchDataLoops } from "../core/sketchmodel";
 import type { BooleanOp, EdgeRef, FaceRef, Solid, Vec3 } from "../core/solid";
 import type { BrepInfo } from "../geometry/brep";
@@ -349,6 +350,80 @@ export class SugarApp implements HostServices {
     );
     this.document.setSelection([feature.id]);
     return feature;
+  }
+
+  // ---- parametreler ----
+
+  /** Parametrelerin güncel değerleri (ifadelerde kullanılır). */
+  parameterScope(): Record<string, number> {
+    return this.document.resolvedParameters().values;
+  }
+
+  /** Parametre değiştiğinde ifadeye bağlı özellik değerleri ve eskiz ölçüleri için gereken yamalar. */
+  private async expressionPatches(values: Record<string, number>): Promise<{ id: string; patch: FeaturePatch }[]> {
+    const out: { id: string; patch: FeaturePatch }[] = [];
+    for (const f of this.document.all()) {
+      const patch: FeaturePatch = {};
+      if (f.exprs && Object.keys(f.exprs).length) {
+        const params = { ...f.params };
+        for (const [key, text] of Object.entries(f.exprs)) {
+          try {
+            params[key] = evaluateExpression(text, values);
+          } catch (e) {
+            throw new Error(`${f.name}: "${text}" ifadesi hesaplanamadı (${errorText(e)})`);
+          }
+        }
+        patch.params = this.normalizeParams(f.type, params);
+        const def = this.primitives.get(f.type);
+        if (def && !def.build) patch.solid = await this.host.buildPrimitive(f.type, patch.params);
+      }
+      if (f.type === "sketch" && f.sketchData?.constraints.some((k) => k.expr)) {
+        const ed = new SketchEdit(sketchDataOf(f));
+        for (const k of ed.d.constraints) {
+          if (!k.expr) continue;
+          let v: number;
+          try {
+            v = evaluateExpression(k.expr, values);
+          } catch (e) {
+            throw new Error(`${f.name}: ölçü "${k.expr}" hesaplanamadı (${errorText(e)})`);
+          }
+          // Yönlü ölçülerde (yatay / dikey mesafe, açı) yön geometriden gelir: işaret korunur.
+          const signed = k.type === "hdistance" || k.type === "vdistance" || k.type === "angle";
+          if (!signed && !(v > 0)) throw new Error(`${f.name}: ölçü "${k.expr}" sıfırdan büyük olmalı`);
+          k.value = signed && (k.value ?? 1) < 0 ? -Math.abs(v) : Math.abs(v);
+        }
+        let data = ed.result();
+        if (this.solver) {
+          const r = this.solver.solve(data);
+          if (r.conflicting.length) throw new Error(`${f.name}: yeni değerlerle ölçüler çelişiyor`);
+          if (r.ok) data = r.data;
+        }
+        patch.sketchData = data;
+      }
+      if (Object.keys(patch).length) out.push({ id: f.id, patch });
+    }
+    return out;
+  }
+
+  /** Parametre ekler / günceller; ifadelerle bağlı tüm özellik ve eskiz ölçüleri aynı geri alma adımında yenilenir. */
+  async setParameter(name: string, expr: string): Promise<void> {
+    const values = this.document.previewParameter(name, expr);
+    const patches = await this.expressionPatches(values);
+    this.document.batch(() => {
+      this.document.setParameter(name, expr);
+      for (const { id, patch } of patches) this.document.update(id, patch);
+    });
+  }
+
+  /** Bir özellik parametresine düz sayı ya da ifade (örn. "genislik / 2") atar; düz sayı ifadeyi kaldırır. */
+  async setFeatureParam(id: string, name: string, text: string): Promise<void> {
+    const f = this.document.get(id);
+    if (!f) throw new Error(`Özellik bulunamadı: ${id}`);
+    const { value, expr } = evaluateInput(text, this.parameterScope());
+    const exprs = { ...(f.exprs ?? {}) };
+    if (expr) exprs[name] = expr;
+    else delete exprs[name];
+    await this.updateFeature(id, { params: { [name]: value }, exprs: Object.keys(exprs).length ? exprs : undefined });
   }
 
   /** Birleştir / Kes / Kesiştir için hedef olabilecek gövdeler: boştaki, bu özelliğe bağlı olmayan katılar. */

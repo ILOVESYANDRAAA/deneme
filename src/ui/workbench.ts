@@ -8,6 +8,7 @@ import { BrepTool } from "./brep";
 import { FaceSketchTool } from "./facesketch";
 import { HoleTool } from "./holetool";
 import { Notifications, showInputDialog } from "./dialogs";
+import { ParametersPanel } from "./parameters";
 import { MassPropertiesTool } from "./massdialog";
 import { ThreePointPlaneTool } from "./pointsplane";
 import { compact, h, icon, isTextInput } from "./dom";
@@ -163,6 +164,12 @@ export class Workbench {
       defaults: { dock: "left", width: 300, visible: false },
     });
     this.panels.add({
+      id: "parameters",
+      title: "Parametreler",
+      content: new ParametersPanel(app).element,
+      defaults: { dock: "left", width: 320, visible: false },
+    });
+    this.panels.add({
       id: "properties",
       title: "Özellikler",
       content: new PropertiesPanel(app, this.sketcher).element,
@@ -292,6 +299,9 @@ export class Workbench {
     );
     c.register({ id: "view.properties", title: "Özellikleri Göster / Gizle", category: "Görünüm" }, () =>
       this.panels.toggle("properties"),
+    );
+    c.register({ id: "view.parameters", title: "Parametreleri Göster / Gizle", category: "Görünüm" }, () =>
+      this.panels.toggle("parameters"),
     );
     c.register({ id: "view.extensions", title: "Eklentileri Göster / Gizle", category: "Görünüm", keybinding: "Ctrl+Shift+X" }, () =>
       this.panels.toggle("extensions"),
@@ -533,6 +543,7 @@ export class Workbench {
       h("span", { class: "doc-title" }, app.title().replace(/ — sugarCAD$/, "")),
       btn("Tarayıcı", ICONS.tree, "view.tree", { pressed: this.panels.isVisible("browser") }),
       btn("Özellikler", ICONS.properties, "view.properties", { pressed: this.panels.isVisible("properties") }),
+      btn("Parametreler", ICONS.parameters, "view.parameters", { pressed: this.panels.isVisible("parameters") }),
       btn("Eklentiler", ICONS.extensions, "view.extensions", { pressed: this.panels.isVisible("extensions") }),
       sep(),
       btn("Komut Paleti", ICONS.palette, "view.palette"),

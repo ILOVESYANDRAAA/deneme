@@ -21,6 +21,8 @@ export interface Feature {
   type: string;
   name: string;
   params: ParamValues;
+  /** Parametre ifadeleri: `params` içindeki bir değerin ifadeden geldiğini belirtir (örn. { distance: "genislik / 2" }). */
+  exprs?: Record<string, string>;
   position: Vec3;
   /** Derece cinsinden X, Y, Z dönüşü. */
   rotation: Vec3;

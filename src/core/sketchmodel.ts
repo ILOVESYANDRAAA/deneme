@@ -72,6 +72,8 @@ export interface SConstraint {
   refs: string[];
   /** Ölçü değeri (mm ya da derece). hdistance/vdistance/angle işaretlidir (yön korunur). */
   value?: number;
+  /** Ölçü değeri bir parametre ifadesinden geliyorsa metni (örn. "genislik / 2"); `value` en son hesaplanan değerdir. */
+  expr?: string;
   /** fix: sabitlenen konum. */
   at?: Vec2;
   /** Ölçü etiketinin geometriden kayması (eskiz koordinatlarında). */

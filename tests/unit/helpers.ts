@@ -1,6 +1,8 @@
+import { init_planegcs_module } from "@salusoft89/planegcs";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import Module from "manifold-3d";
+import { SketchSolver } from "../../src/core/solver";
 import { SugarApp, type GeometryEngine, type UiBridge } from "../../src/app/controller";
 import type { Solid } from "../../src/core/solid";
 import type { MeshData } from "../../src/geometry/evaluate";
@@ -109,4 +111,9 @@ export function pluginFromDisk(dir: string): PluginSource {
 
 export function inlinePlugin(manifest: Partial<PluginManifest> & { name: string }, code: string): PluginSource {
   return { manifest: { version: "1.0.0", main: "index.js", ...manifest }, code, location: "user" };
+}
+
+/** Testlerde eskiz kısıt çözücüsü. */
+export function webSolverForTests(): Promise<SketchSolver> {
+  return SketchSolver.create(() => init_planegcs_module({ print: () => {}, printErr: () => {} } as never));
 }

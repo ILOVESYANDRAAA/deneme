@@ -115,6 +115,12 @@ const girdi = await sugarcad.ui.showInput({
   fields: [{ name: "en", label: "En", type: "number", value: 30, min: 1 }],
 });
 if (girdi === null) return; // kullanıcı iptal etti
+
+// Seçim listesi: `options` verilen alan bir liste olur ve seçilenin `value`'sunu (metin) döndürür.
+const tur = await sugarcad.ui.showInput({
+  title: "Malzeme",
+  fields: [{ name: "malzeme", label: "Malzeme", options: [{ value: "celik", label: "Çelik" }, { value: "alu", label: "Alüminyum" }] }],
+});
 ```
 
 Her `document.*` çağrısı tek bir **geri alma** adımıdır; kullanıcı `Ctrl+Z` ile geri alabilir.

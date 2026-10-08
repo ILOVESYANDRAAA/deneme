@@ -15,7 +15,9 @@ import type { Viewport } from "./viewport";
 /** Ölçü etiketi metni: ⌀ / R öneki, değer ve birim. */
 export function dimensionText(k: SConstraint): string {
   const type = k.type as keyof typeof DIMENSION_UNITS;
-  return `${dimensionPrefix(type)}${formatNumber(k.value ?? 0)}${DIMENSION_UNITS[type] === "°" ? "°" : ""}`;
+  const value = `${dimensionPrefix(type)}${formatNumber(Number((k.value ?? 0).toFixed(4)))}${DIMENSION_UNITS[type] === "°" ? "°" : ""}`;
+  // Parametre ifadesinden gelen ölçüler "ƒ" ile işaretlenir.
+  return k.expr ? `ƒ ${value}` : value;
 }
 
 /** İki eğriyi birbirine bağlayan kısıtların simgesi iki eğrinin üstünde de gösterilir. */
@@ -80,7 +82,7 @@ export class SketchNotes {
           "button",
           {
             class: `note dim${selected ? " selected" : ""}${conflicting.has(k.id) ? " conflict" : ""}`,
-            title: `${CONSTRAINT_LABELS[k.type]} — çift tıklayarak düzenleyin`,
+            title: `${CONSTRAINT_LABELS[k.type]}${k.expr ? ` = ${k.expr}` : ""} — çift tıklayarak düzenleyin`,
             dataset: { constraint: k.id },
             attrs: { "aria-label": `${CONSTRAINT_LABELS[k.type]} ${dimensionText(k)}` },
             onclick: (e: MouseEvent) => {
@@ -164,14 +166,14 @@ export class SketchNotes {
     if (!dr) return null;
     const choice = dr.choices[dr.index];
     const unit = DIMENSION_UNITS[choice.type];
+    const editing = dr.editing ? sk.data().constraints.find((c) => c.id === dr.editing) : undefined;
     const input = h("input", {
       type: "text",
-      value: formatNumber(choice.value),
+      value: editing?.expr ?? formatNumber(choice.value),
       attrs: { inputmode: "decimal", "aria-label": `${CONSTRAINT_LABELS[choice.type]} değeri`, spellcheck: "false" },
     });
     const submit = () => {
-      const v = Number(input.value.replace(",", "."));
-      sk.commitDimension(v);
+      sk.commitDimensionText(input.value);
     };
     input.addEventListener("keydown", (e) => {
       e.stopPropagation();

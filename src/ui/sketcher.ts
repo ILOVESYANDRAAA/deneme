@@ -22,6 +22,7 @@ import {
   type SketchData,
   type SnapKind,
 } from "../core/sketchmodel";
+import { evaluateInput } from "../core/expr";
 import { extendCurve, offsetCurves, patternCircular, patternRect, rotateAbout, trimCurve, translateBy } from "../core/sketchops";
 import type { Vec2 } from "../core/solid";
 import type { PointerHandler, Viewport } from "./viewport";
@@ -862,7 +863,29 @@ export class Sketcher implements PointerHandler {
   }
 
   /** Açık ölçü kutusundaki değeri kaydeder. Çelişirse kutu açık kalır ve false döner. */
-  commitDimension(value: number): boolean {
+  /** Ölçü kutusuna yazılan metni (sayı ya da parametre ifadesi) değerlendirip uygular. */
+  commitDimensionText(text: string): boolean {
+    try {
+      const { value, expr } = evaluateInput(text, this.app.parameterScope());
+      return this.commitDimension(value, expr);
+    } catch (e) {
+      this.reportError(e);
+      return false;
+    }
+  }
+
+  /** Var olan ölçünün değerini metinle (sayı ya da ifade) değiştirir. */
+  setDimensionText(id: string, text: string): boolean {
+    try {
+      const { value, expr } = evaluateInput(text, this.app.parameterScope());
+      return this.setDimensionValue(id, value, expr);
+    } catch (e) {
+      this.reportError(e);
+      return false;
+    }
+  }
+
+  commitDimension(value: number, expr?: string): boolean {
     const dr = this.draft;
     if (!dr) return false;
     const choice = dr.choices[dr.index];
@@ -876,8 +899,10 @@ export class Sketcher implements PointerHandler {
       const k = ed.d.constraints.find((c) => c.id === dr.editing);
       if (!k) return false;
       k.value = signed;
+      if (expr) k.expr = expr;
+      else delete k.expr;
     } else {
-      ed.constrain(choice.type, choice.refs, { value: signed });
+      ed.constrain(choice.type, choice.refs, { value: signed, ...(expr ? { expr } : {}) });
     }
     if (!this.tryApply(ed)) return false;
     this.draft = null;
@@ -887,7 +912,7 @@ export class Sketcher implements PointerHandler {
   }
 
   /** Var olan bir ölçünün değerini (kutu açmadan) değiştirir; çelişirse reddeder. */
-  setDimensionValue(id: string, value: number): boolean {
+  setDimensionValue(id: string, value: number, expr?: string): boolean {
     const ed = this.edit_();
     const k = ed.d.constraints.find((c) => c.id === id);
     if (!k || k.value === undefined) return false;
@@ -897,6 +922,8 @@ export class Sketcher implements PointerHandler {
       return false;
     }
     k.value = signed;
+    if (expr) k.expr = expr;
+    else delete k.expr;
     return this.tryApply(ed);
   }
 

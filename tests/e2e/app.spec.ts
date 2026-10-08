@@ -991,3 +991,74 @@ test("STEP: dışa aktar (indirme) ve geri içe aktar", async ({ page }) => {
   await expect.poll(volume, { timeout: 30_000 }).toBeCloseTo(8000, 0);
   expect(errors).toEqual([]);
 });
+
+test("Parametreler: panelden ekle, ölçüde ve özellikte ifade kullan, değiştirince model güncellensin", async ({ page }) => {
+  const errors = await open(page);
+  await expect(page.locator("body[data-solver=true]")).toBeAttached();
+  // Parametre ekle: genislik = 40
+  await page.evaluate(() => (window as any).sugarcad.commands.run("view.parameters"));
+  const panel = page.locator(".params-panel");
+  await expect(panel).toBeVisible();
+  await panel.getByLabel("Yeni parametre adı").fill("genislik");
+  await panel.getByLabel("Yeni parametre değeri").fill("40");
+  await panel.getByRole("button", { name: "Ekle" }).click();
+  await expect(panel.locator("[data-param=genislik] .param-value")).toHaveText("40");
+  await panel.getByLabel("Yeni parametre adı").fill("yukseklik");
+  await panel.getByLabel("Yeni parametre değeri").fill("genislik / 2");
+  await panel.getByLabel("Yeni parametre değeri").press("Enter");
+  await expect(panel.locator("[data-param=yukseklik] .param-value")).toHaveText("20");
+
+  // Hatalı ifade anlaşılır uyarı verir
+  await panel.getByLabel("Yeni parametre adı").fill("kotu");
+  await panel.getByLabel("Yeni parametre değeri").fill("yok + 1");
+  await panel.getByRole("button", { name: "Ekle" }).click();
+  await expect(page.locator(".toast.error")).toContainText("Bilinmeyen parametre");
+
+  // Dikdörtgen çiz; alt kenara ölçü: ifade "genislik"
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 20]);
+  await expect.poll(async () => (await sketchData(page)).curves.length).toBe(4);
+  await page.keyboard.press("d");
+  await clickSketch(page, [20, 0]);
+  const editor = page.getByRole("group", { name: "Ölçü" });
+  await expect(editor).toBeVisible();
+  await editor.getByRole("textbox").fill("genislik");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".sketch-notes .note.dim").first()).toContainText("ƒ 40");
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+
+  // Ekstrüzyon mesafesi: ƒ düğmesiyle "yukseklik / 4" (= 5)
+  await page.getByLabel("İfade yaz: distance").click();
+  const dlg = page.getByRole("dialog", { name: /Mesafe/ });
+  await dlg.getByRole("textbox").fill("yukseklik / 4");
+  await dlg.getByRole("button", { name: "Tamam" }).click();
+  const volume = () =>
+    page.evaluate(() => {
+      const app = (window as any).sugarcad;
+      return app.meshes.get(app.document.all()[1].id)?.volume ?? 0;
+    });
+  await expect.poll(volume).toBeCloseTo(40 * 20 * 5, 0);
+  await page.screenshot({ path: `${S}/25-parametreler.png` });
+
+  // Parametreyi değiştir: genislik 40 → 60; yukseklik 30 → mesafe 7.5. Eskiz yeniden çözülür, hacim güncellenir.
+  await panel.getByLabel("genislik ifadesi").fill("60");
+  await panel.getByLabel("genislik ifadesi").press("Enter");
+  await expect.poll(volume, { timeout: 15_000 }).toBeCloseTo(60 * 20 * 7.5, 0);
+  const sk = await sketchData(page, 0);
+  const xs = sk.points.map((p: any) => p.x);
+  expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(60, 3);
+
+  // Kullanımdaki parametre silinemez
+  await panel.getByLabel("genislik parametresini sil").click();
+  await expect(page.locator(".toast.error").last()).toContainText("kullanımda");
+
+  // Tek geri alma adımı: değişikliği geri al
+  await page.keyboard.press("Control+z");
+  await expect.poll(volume, { timeout: 15_000 }).toBeCloseTo(40 * 20 * 5, 0);
+  expect(errors).toEqual([]);
+});

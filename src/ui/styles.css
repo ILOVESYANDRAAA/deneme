@@ -1537,3 +1537,60 @@ select:focus {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+
+.params-panel {
+  gap: 6px;
+}
+
+.param-list {
+  display: grid;
+  gap: 4px;
+}
+
+.param-head,
+.param-row {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 56px 28px;
+  align-items: center;
+  gap: 4px;
+}
+
+.param-head {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.param-row input {
+  min-width: 0;
+}
+
+.param-row .param-value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.param-row.bad .param-value {
+  color: #d0342c;
+}
+
+.param-row.add {
+  margin-top: 4px;
+  grid-template-columns: 1fr 1.2fr auto;
+}
+
+.expr-btn {
+  min-width: 24px;
+  padding: 0 4px;
+}
+
+.expr-btn.on {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.field.has-expr {
+  grid-template-columns: 1fr 100px auto;
+}

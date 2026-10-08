@@ -1,4 +1,5 @@
 import { Emitter } from "./events";
+import { resolveParameters, validateParameterName, referencedNames, type ParamDef } from "./expr";
 import { featureRefs, isSolidFeature, sketchDataOf, type Feature } from "./features";
 import type { BooleanOp } from "./solid";
 
@@ -11,6 +12,14 @@ export interface SugarFile {
   app: "sugarCAD";
   version: number;
   features: Feature[];
+  /** Adlandırılmış parametreler (eski dosyalarda yoktur). */
+  parameters?: ParamDef[];
+}
+
+/** Geri alma adımı: özellikler ve parametreler birlikte saklanır. */
+interface Snapshot {
+  features: Feature[];
+  params: ParamDef[];
 }
 
 export type FeatureInit = Omit<Feature, "id" | "position" | "rotation" | "name"> &
@@ -28,8 +37,11 @@ function clone<T>(value: T): T {
  */
 export class SugarDocument {
   private features: Feature[] = [];
-  private undoStack: Feature[][] = [];
-  private redoStack: Feature[][] = [];
+  private params: ParamDef[] = [];
+  private undoStack: Snapshot[] = [];
+  private redoStack: Snapshot[] = [];
+  /** `batch` içindeyken: tek geri alma adımı ve tek değişiklik bildirimi. */
+  private batching: { checkpointed: boolean; changed: boolean } | null = null;
   private nextId = 1;
   private selection: string[] = [];
 
@@ -97,15 +109,115 @@ export class SugarDocument {
   // ---- değiştirme ----
 
   private checkpoint(): void {
-    this.undoStack.push(clone(this.features));
+    if (this.batching) {
+      if (this.batching.checkpointed) return;
+      this.batching.checkpointed = true;
+    }
+    this.undoStack.push({ features: clone(this.features), params: clone(this.params) });
     if (this.undoStack.length > MAX_HISTORY) this.undoStack.shift();
     this.redoStack = [];
   }
 
   private changed(): void {
     this.dirty = true;
+    if (this.batching) {
+      this.batching.changed = true;
+      return;
+    }
     this.setSelection(this.selection);
     this.onDidChange.fire();
+  }
+
+  /** `fn` içindeki tüm değişiklikler tek geri alma adımı olur ve tek bildirim gönderir. Hata olursa değişiklikler geri alınır. */
+  batch<T>(fn: () => T): T {
+    if (this.batching) return fn();
+    const state = { checkpointed: false, changed: false };
+    this.batching = state;
+    try {
+      return fn();
+    } catch (e) {
+      if (state.checkpointed) {
+        const prev = this.undoStack.pop()!;
+        this.features = prev.features;
+        this.params = prev.params;
+      }
+      state.changed = state.checkpointed;
+      throw e;
+    } finally {
+      this.batching = null;
+      if (state.changed) this.changed();
+    }
+  }
+
+  // ---- parametreler ----
+
+  parameters(): readonly ParamDef[] {
+    return this.params;
+  }
+
+  /** Parametrelerin çözülmüş değerleri ve hataları. */
+  resolvedParameters(): { values: Record<string, number>; errors: Record<string, string> } {
+    return resolveParameters(this.params);
+  }
+
+  /** Parametre ekle / güncelle önerisini doğrular; geçerliyse yeni liste ve çözülmüş değerleri döndürür, değilse hata fırlatır. */
+  private candidate(name: string, expr: string): { next: ParamDef[]; values: Record<string, number> } {
+    const bad = validateParameterName(name);
+    if (bad) throw new Error(bad);
+    const text = expr.trim();
+    if (!text) throw new Error("Parametre değeri boş olamaz");
+    const exists = this.params.some((p) => p.name === name);
+    const next = exists ? this.params.map((p) => (p.name === name ? { name, expr: text } : p)) : [...this.params, { name, expr: text }];
+    const { values, errors } = resolveParameters(next);
+    if (errors[name]) throw new Error(errors[name]);
+    const broken = Object.entries(errors).find(([n]) => n !== name);
+    if (broken) throw new Error(`"${broken[0]}" parametresi bozulur: ${broken[1]}`);
+    return { next, values };
+  }
+
+  /** Önerilen parametreyle oluşacak değerler (belgeyi değiştirmeden). */
+  previewParameter(name: string, expr: string): Record<string, number> {
+    return this.candidate(name, expr).values;
+  }
+
+  /** Ekler ya da günceller (`expr`: sayı ya da ifade). Geçersizse (ad, bilinmeyen başvuru, döngü) hata fırlatır. */
+  setParameter(name: string, expr: string): void {
+    const { next } = this.candidate(name, expr);
+    this.checkpoint();
+    this.params = next;
+    this.changed();
+  }
+
+  /** Bu parametreye başvuran parametre, özellik ifadesi ve ölçü kısıtları (adlarıyla). */
+  parameterUsers(name: string): string[] {
+    const users: string[] = [];
+    const uses = (text?: string) => !!text && referencedNames(text).includes(name);
+    for (const p of this.params) if (p.name !== name && uses(p.expr)) users.push(`parametre ${p.name}`);
+    for (const f of this.features) {
+      if (Object.values(f.exprs ?? {}).some(uses) || f.sketchData?.constraints.some((k) => uses(k.expr))) users.push(f.name);
+    }
+    return users;
+  }
+
+  removeParameter(name: string): void {
+    if (!this.params.some((p) => p.name === name)) return;
+    const users = this.parameterUsers(name);
+    if (users.length) throw new Error(`"${name}" kullanımda: ${users.slice(0, 4).join(", ")}${users.length > 4 ? "…" : ""}`);
+    this.checkpoint();
+    this.params = this.params.filter((p) => p.name !== name);
+    this.changed();
+  }
+
+  renameParameter(from: string, to: string): void {
+    if (from === to) return;
+    const bad = validateParameterName(to);
+    if (bad) throw new Error(bad);
+    if (this.params.some((p) => p.name === to)) throw new Error(`"${to}" adında bir parametre zaten var`);
+    const users = this.parameterUsers(from);
+    if (users.length) throw new Error(`"${from}" kullanımda (${users.slice(0, 3).join(", ")}); önce başvuruları kaldırın`);
+    this.checkpoint();
+    this.params = this.params.map((p) => (p.name === from ? { ...p, name: to } : p));
+    this.changed();
   }
 
   private uniqueName(base: string): string {
@@ -194,8 +306,9 @@ export class SugarDocument {
   undo(): boolean {
     const prev = this.undoStack.pop();
     if (!prev) return false;
-    this.redoStack.push(this.features);
-    this.features = prev;
+    this.redoStack.push({ features: this.features, params: this.params });
+    this.features = prev.features;
+    this.params = prev.params;
     this.changed();
     return true;
   }
@@ -203,8 +316,9 @@ export class SugarDocument {
   redo(): boolean {
     const next = this.redoStack.pop();
     if (!next) return false;
-    this.undoStack.push(this.features);
-    this.features = next;
+    this.undoStack.push({ features: this.features, params: this.params });
+    this.features = next.features;
+    this.params = next.params;
     this.changed();
     return true;
   }
@@ -212,7 +326,7 @@ export class SugarDocument {
   // ---- dosya ----
 
   toJSON(): SugarFile {
-    return { app: "sugarCAD", version: FILE_VERSION, features: clone(this.features) };
+    return { app: "sugarCAD", version: FILE_VERSION, features: clone(this.features), ...(this.params.length ? { parameters: clone(this.params) } : {}) };
   }
 
   serialize(): string {
@@ -226,6 +340,7 @@ export class SugarDocument {
     }
     if (!Array.isArray(file.features)) throw new Error("Dosyada özellik listesi yok");
     this.features = clone(file.features).map(migrateFeature);
+    this.params = Array.isArray(file.parameters) ? clone(file.parameters).filter((p) => p && typeof p.name === "string" && typeof p.expr === "string") : [];
     this.undoStack = [];
     this.redoStack = [];
     this.selection = [];
