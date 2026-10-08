@@ -59,6 +59,12 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
   Çekirdek (~23 MB wasm) uygulama açılırken değil, ilk kullanımda yüklenir; diğer işlemler hızlı manifold çekirdeğinde kalır
 - **Yüzeye Eskiz:** gövdenin düz bir yüzeyine tıklayınca o yüzeyin düzleminde eskiz açılır (yüzey vurgulanır).
   Eskiz yüzeye bağlı değildir; gövde değişirse eskiz yerinde kalır. Birleştir / Kes ile çıkıntı ve cep açılır
+- **Loft ve Süpürme** (OpenCascade): Ctrl ile iki ya da daha çok kapalı eskizi sırayla seçip **Loft** ile aralarında geçiş
+  oluşturur (düz ya da yumuşak). **Süpürme**: kapalı bir profil eskizi ve açık bir yol eskizi (çizgi / yay zinciri) seçilir
+- **Kaburga:** açık bir yolu (çizgi / yay) kalınlaştırıp yükseltir; tek gövde varsa ona birleştirilir
+- **Eksen:** Döndürme, eskizin dikey / yatay ekseni ya da eskizdeki herhangi bir çizgi (yapı çizgisi dahil) etrafında yapılabilir
+- **Düzlemler:** başlangıç düzlemleri, ofset, **Açılı Düzlem** (bir düzlemi eksen etrafında döndürerek) ve **3 Noktalı Düzlem**
+  (gövde köşelerine tıklayarak) üzerinde eskiz açılabilir
 - **Açılı Yüzey:** OpenCascade ile seçili yüzlere kalıp açısı verir (çekme yönü ve nötr düzlem ayarlı)
 - **Delik** (`H`): gövde yüzeyine tıklayarak (birden çok konum seçilebilir) basit, silindirik havşalı ya da konik
   havşalı delik açar; derinlik 0 ise boydan boya. Konumlar ve ölçüler sonradan Özellikler panelinde değişir
@@ -175,7 +181,6 @@ exports.activate = (sugarcad) => {
 
 ## Yol haritası
 
-- Süpürme (sweep), loft ve kaburga (OpenCascade ile)
 - Ekstrüzyonda "bir sonrakine kadar" seçeneği
 - Eklenti mağazası (indir / güncelle)
 - STEP / 3MF içe ve dışa aktarma

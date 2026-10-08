@@ -49,7 +49,9 @@ export interface FeaturePatch {
 export interface InputField {
   name: string;
   label: string;
+  /** `options` verilirse alan bir seçim listesi olur ve seçilen seçeneğin `value`'su döner. */
   type?: "number" | "text";
+  options?: { value: string; label: string }[];
   value?: number | string;
   min?: number;
   max?: number;

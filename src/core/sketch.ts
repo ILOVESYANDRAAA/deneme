@@ -63,6 +63,40 @@ export function frameFromFace(point: Vec3, normal: Vec3): PlaneFrame {
   return { origin: round(origin), u: round(u), v: round(v), n: round(n) };
 }
 
+const sub3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const roundFrame = (f: PlaneFrame): PlaneFrame => {
+  const r = (v: Vec3): Vec3 => v.map((x) => Math.round(x * 1e9) / 1e9 + 0) as Vec3;
+  return { origin: r(f.origin), u: r(f.u), v: r(f.v), n: r(f.n) };
+};
+
+/**
+ * Bir taban düzlemin u ya da v ekseni etrafında `angleDeg` derece döndürülmüş düzlem (açılı düzlem).
+ * Dönme başlangıç noktasından geçen eksen etrafındadır; u × v = n korunur.
+ */
+export function angledFrame(base: PlaneRef, axis: "U" | "V", angleDeg: number): PlaneFrame {
+  const f = frameOf(base);
+  const a = (angleDeg * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const mix = (p: Vec3, q: Vec3, cp: number, cq: number): Vec3 => [p[0] * cp + q[0] * cq, p[1] * cp + q[1] * cq, p[2] * cp + q[2] * cq];
+  if (axis === "U") return roundFrame({ origin: f.origin, u: f.u, v: mix(f.v, f.n, c, s), n: mix(f.n, f.v, c, -s) });
+  return roundFrame({ origin: f.origin, u: mix(f.u, f.n, c, -s), v: f.v, n: mix(f.n, f.u, c, s) });
+}
+
+/**
+ * Üç noktadan geçen düzlem: başlangıç `a`, u ekseni a→b, normal u × (a→c). Noktalar doğrusal ise null.
+ */
+export function frameFromPoints(a: Vec3, b: Vec3, c: Vec3): PlaneFrame | null {
+  const ab = sub3(b, a);
+  const ac = sub3(c, a);
+  const n = cross3(ab, ac);
+  const scale = Math.hypot(...ab) * Math.hypot(...ac);
+  if (!(scale > 1e-12) || Math.hypot(...n) / scale < 1e-6) return null;
+  const nu = unit3(n);
+  const u = unit3(ab);
+  return roundFrame({ origin: a, u, v: cross3(nu, u), n: nu });
+}
+
 export function isPlaneName(value: unknown): value is PlaneName {
   return value === "XY" || value === "XZ" || value === "YZ";
 }

@@ -1,13 +1,14 @@
 import type { InputField } from "../../packages/api/sugarcad";
 import type { MessageKind, SugarApp, UiBridge } from "../app/controller";
 import { BOOLEAN_LABELS, BREP_LABELS, BREP_FEATURES, type BodyFeatureType, type BrepFeatureType } from "../core/features";
-import { PLANES, type PlaneName } from "../core/sketch";
+import { PLANES, angledFrame, type PlaneName } from "../core/sketch";
 import { CONSTRAINT_LABELS, type GeometricConstraintType } from "../core/sketchmodel";
 import type { BooleanOp } from "../core/solid";
 import { BrepTool } from "./brep";
 import { FaceSketchTool } from "./facesketch";
 import { HoleTool } from "./holetool";
 import { Notifications, showInputDialog } from "./dialogs";
+import { ThreePointPlaneTool } from "./pointsplane";
 import { compact, h, icon, isTextInput } from "./dom";
 import { ExtensionsPanel } from "./extensions";
 import { ICONS, iconForType } from "./icons";
@@ -115,6 +116,7 @@ export class Workbench {
   readonly brep: BrepTool;
   readonly hole: HoleTool;
   readonly faceSketch: FaceSketchTool;
+  readonly planePoints: ThreePointPlaneTool;
   private palette: CommandPalette;
   private hud: SketchHud;
   readonly notes: SketchNotes;
@@ -142,6 +144,7 @@ export class Workbench {
     this.brep = new BrepTool(app, this.viewport, () => this.renderAll());
     this.hole = new HoleTool(app, this.viewport, () => this.renderAll());
     this.faceSketch = new FaceSketchTool(app, this.viewport, this.sketcher, () => this.renderAll());
+    this.planePoints = new ThreePointPlaneTool(app, this.viewport, this.sketcher, () => this.renderAll());
 
     this.panels = new PanelHost();
     this.panels.add({
@@ -214,6 +217,7 @@ export class Workbench {
           this.brep.close();
           this.hole.close();
           this.faceSketch.close();
+          this.planePoints.close();
         }
         lastSketch = this.sketcher.activeId;
         lastTool = this.sketcher.tool;
@@ -405,6 +409,34 @@ export class Workbench {
         await this.brep.open(type);
       });
     }
+    const closeTools = () => {
+      this.measure.close();
+      this.brep.close();
+      this.hole.close();
+      this.faceSketch.close();
+      this.planePoints.close();
+    };
+    this.app.commands.register({ id: "sketch.newAngled", title: "Açılı Düzlemde Eskiz", category: "Eskiz" }, async () => {
+      if (this.sketcher.isActive) throw new Error("Önce mevcut eskizi bitirin");
+      const planes = (Object.keys(PLANES) as PlaneName[]).map((p) => ({ value: p, label: PLANES[p].label }));
+      const v = await this.app.showInput({
+        title: "Açılı Düzlemde Eskiz",
+        fields: [
+          { name: "base", label: "Taban düzlem", options: planes, value: "XY" },
+          { name: "axis", label: "Dönme ekseni (taban düzlemde)", options: [{ value: "U", label: "Yatay eksen (u)" }, { value: "V", label: "Dikey eksen (v)" }], value: "U" },
+          { name: "angle", label: "Açı (°)", type: "number", value: 45, min: -180, max: 180, step: 5 },
+          { name: "offset", label: "Ofset (mm, düzlem normali yönünde)", type: "number", value: 0, step: 1 },
+        ],
+      });
+      if (!v) return;
+      const sketch = this.app.createSketch(angledFrame(String(v.base) as PlaneName, v.axis === "V" ? "V" : "U", Number(v.angle)), Number(v.offset));
+      this.sketcher.edit(sketch.id);
+    });
+    this.app.commands.register({ id: "sketch.new3pt", title: "3 Noktalı Düzlemde Eskiz", category: "Eskiz" }, () => {
+      if (this.sketcher.isActive) throw new Error("Önce mevcut eskizi bitirin");
+      closeTools();
+      this.planePoints.open();
+    });
     this.app.commands.register({ id: "sketch.onFace", title: "Yüzeye Eskiz", category: "Eskiz" }, () => {
       if (this.sketcher.isActive) throw new Error("Önce mevcut eskizi bitirin");
       this.measure.close();
@@ -552,6 +584,9 @@ export class Workbench {
           this.button("sketch.onFace", ICONS.sketchOnFace, { label: "Yüzeye Eskiz", pressed: this.faceSketch.isActive, title: "Yüzeye Eskiz — gövdenin düz bir yüzeyine tıklayarak o yüzeyde eskiz açar" }),
           this.button("feature.extrude", ICONS.extrude, { title: "Ekstrüzyon (E) — eskizi 3D'ye çeker" }),
           this.button("feature.revolve", ICONS.revolve, { title: "Döndürme (Shift+R) — eskizi eksen etrafında döndürür" }),
+          this.button("feature.rib", ICONS.rib, { title: "Kaburga — açık bir yolu (çizgi / yay) kalınlaştırıp yükseltir; gövdeye birleştirilir" }),
+          this.button("feature.loft", ICONS.loft, { disabled: sel.length < 2, title: "Loft — Ctrl ile iki ya da daha çok kapalı eskizi sırayla seçin; aralarında geçiş yapar" }),
+          this.button("feature.sweep", ICONS.sweep, { disabled: sel.length !== 2, title: "Süpürme — iki eskiz seçin: kapalı bir profil ve açık bir yol" }),
           this.button("feature.linearPattern", ICONS.linearPattern, { disabled: !oneBody, title: "Dikdörtgensel Desen — seçili gövdeyi çoğaltır" }),
           this.button("feature.mirror", ICONS.mirror, { disabled: !oneBody, title: "Ayna — seçili gövdeyi aynalar" }),
         ],
@@ -562,6 +597,9 @@ export class Workbench {
           { separator: true, label: "" },
           this.item("feature.extrude", ICONS.extrude),
           this.item("feature.revolve", ICONS.revolve),
+          this.item("feature.rib", ICONS.rib),
+          this.item("feature.loft", ICONS.loft, { disabled: sel.length < 2 }),
+          this.item("feature.sweep", ICONS.sweep, { disabled: sel.length !== 2 }),
           { separator: true, label: "" },
           { label: "Desen", icon: ICONS.linearPattern, submenu: [bodyItem("linearPattern"), bodyItem("circularPattern")] },
           bodyItem("mirror"),
@@ -596,9 +634,15 @@ export class Workbench {
       {
         id: "construct",
         label: "YAPI",
-        buttons: [this.button("sketch.newOffset", ICONS.sketchOffset, { label: "Ofset Düzlem", title: "Ofset Düzlemde Eskiz — düzlemi kaydırarak eskiz açar" })],
+        buttons: [
+          this.button("sketch.newOffset", ICONS.sketchOffset, { label: "Ofset Düzlem", title: "Ofset Düzlemde Eskiz — düzlemi kaydırarak eskiz açar" }),
+          this.button("sketch.newAngled", ICONS.plane, { label: "Açılı Düzlem", title: "Açılı Düzlemde Eskiz — bir düzlemi eksen etrafında döndürerek eskiz açar" }),
+          this.button("sketch.new3pt", ICONS.plane, { label: "3 Nokta", pressed: this.planePoints.isActive, title: "3 Noktalı Düzlem — gövde köşelerine tıklayarak düzlem kurar ve eskiz açar" }),
+        ],
         menu: [
           this.item("sketch.newOffset", ICONS.sketchOffset),
+          this.item("sketch.newAngled", ICONS.plane),
+          this.item("sketch.new3pt", ICONS.plane),
           { separator: true, label: "" },
           ...(Object.keys(PLANES) as PlaneName[]).map((p) => this.item(`sketch.new.${p}`, ICONS.plane)),
         ],
@@ -809,6 +853,7 @@ export class Workbench {
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     if (!typing && e.key === "Escape") {
       if (this.viewport.isPickingPlane) return this.viewport.cancelPlanePick();
+      if (this.planePoints.isActive) return this.planePoints.close();
       if (this.faceSketch.isActive) return this.faceSketch.close();
       if (this.hole.isActive) return this.hole.close();
       if (this.brep.isActive) return this.brep.close();

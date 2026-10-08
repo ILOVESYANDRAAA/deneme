@@ -154,12 +154,18 @@ export class PropertiesPanel {
       form.append(h("div", { class: "meta" }, `İşlenenler: ${a} ve ${b}`));
     } else if (app.paramSpecs(f.type)) {
       if (f.type === "sketch") this.sketchFields(form, f);
-      if (f.type === "extrude" || f.type === "revolve") {
+      if (f.type === "extrude" || f.type === "revolve" || f.type === "rib") {
         const sketch = f.sketch ? app.document.get(f.sketch) : undefined;
         form.append(h("div", { class: "meta" }, `Eskiz: ${sketch?.name ?? "—"}`));
         this.operationFields(form, f);
       }
-      if (f.type === "extrude") {
+      if (f.type === "loft" || f.type === "sweep") {
+        const names = (ids: string[]) => ids.map((id) => app.document.get(id)?.name ?? "—").join(" → ");
+        if (f.type === "loft") form.append(h("div", { class: "meta" }, `Kesitler: ${names(f.sections ?? [])}`));
+        else form.append(h("div", { class: "meta" }, `Profil: ${names(f.sketch ? [f.sketch] : [])} · Yol: ${names(f.path ? [f.path] : [])}`));
+        this.operationFields(form, f);
+      }
+      if (f.type === "extrude" || f.type === "rib") {
         form.append(
           this.selectField("direction", "Yön", DIRECTION_LABELS, f.direction ?? "one", (v) =>
             this.apply(f.id, { direction: v === "one" ? undefined : (v as ExtrudeDirection) }),
@@ -302,12 +308,21 @@ export class PropertiesPanel {
   }
 
   private axisField(form: HTMLElement, f: Feature): void {
+    // Seçenekler: eskizin iki ekseni ve eskizdeki her çizgi (yapı çizgileri dahil).
+    const options: [string, string][] = [["V", AXIS_LABELS.V], ["U", AXIS_LABELS.U]];
+    const sketch = f.sketch ? this.app.document.get(f.sketch) : undefined;
+    const data = sketch ? sketchDataOf(sketch) : undefined;
+    let n = 0;
+    for (const c of data?.curves ?? []) {
+      if (c.kind !== "line") continue;
+      n++;
+      options.push([`line:${c.id}`, `Çizgi ${n}${c.construction ? " (yapı)" : ""}`]);
+    }
+    const current = f.axis ?? "V";
     const select = h(
       "select",
       { attrs: { "aria-label": "Eksen" } },
-      ...(Object.keys(AXIS_LABELS) as RevolveAxis[]).map((a) =>
-        h("option", { value: a, selected: a === (f.axis ?? "V") }, AXIS_LABELS[a]),
-      ),
+      ...options.map(([value, label]) => h("option", { value, selected: value === current }, label)),
     );
     select.addEventListener("change", () => this.apply(f.id, { axis: select.value as RevolveAxis }));
     this.inputs.set("axis", select);

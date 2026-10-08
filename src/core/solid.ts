@@ -42,6 +42,13 @@ export interface FaceRef {
   kind: string;
 }
 
+/** Bir eskiz profilinin (kapalı ya da açık) uzaydaki yeri: yerel koordinat → dünya matrisi + kesin eğri. */
+export interface Section {
+  /** 4×4, sütun öncelikli (eskiz düzlemi matrisi). */
+  matrix: number[];
+  loop: Loop;
+}
+
 export type Solid =
   | { kind: "box"; size: Vec3 }
   | { kind: "cylinder"; radius: number; height: number; segments?: number }
@@ -56,6 +63,10 @@ export type Solid =
   | { kind: "fillet"; child: Solid; radius: number; edges: EdgeRef[] }
   | { kind: "chamfer"; child: Solid; distance: number; edges: EdgeRef[] }
   | { kind: "shell"; child: Solid; thickness: number; faces: FaceRef[] }
+  /** Eskiz kesitleri arasında geçiş (loft): kesitler sırayla bağlanır; `ruled` düz (yumuşatmasız) geçiştir. */
+  | { kind: "loft"; sections: Section[]; ruled?: boolean }
+  /** Kapalı `profile` kesitini açık `path` yolu boyunca süpürür. */
+  | { kind: "sweep"; profile: Section; path: Section }
   /** Seçili yüzlere `angle` derece eğim verir; `pull` çekme yönüdür, nötr düzlem gövdenin çekme yönündeki en alt noktasından `neutral` kadar yukarıdadır. */
   | { kind: "draft"; child: Solid; angle: number; faces: FaceRef[]; pull: Vec3; neutral?: number };
 
@@ -66,6 +77,8 @@ export function needsBrep(solid: Solid): boolean {
     case "chamfer":
     case "shell":
     case "draft":
+    case "loft":
+    case "sweep":
       return true;
     case "boolean":
       return solid.children.some(needsBrep);
@@ -84,6 +97,23 @@ function isNum(v: unknown): v is number {
 
 function isVec(v: unknown, n: number): boolean {
   return Array.isArray(v) && v.length === n && v.every(isNum);
+}
+
+function validateSection(value: unknown, path: string): void {
+  const sec = value as { matrix?: unknown; loop?: Record<string, unknown> } | null;
+  if (!sec || typeof sec !== "object" || !isVec(sec.matrix, 16)) throw new Error(`${path}.matrix: 16 sayılık 4×4 matris olmalı`);
+  const loop = sec.loop;
+  if (!loop || typeof loop !== "object") throw new Error(`${path}.loop: eğri olmalı`);
+  if ("circle" in loop) {
+    const c = loop.circle as { c?: unknown; r?: unknown };
+    if (!isVec(c?.c, 2) || !isNum(c?.r) || (c.r as number) <= 0) throw new Error(`${path}.loop.circle: merkez ve pozitif yarıçap olmalı`);
+    return;
+  }
+  const segs = loop.segs;
+  if (!isVec(loop.from, 2) || !Array.isArray(segs) || segs.length < 1 || segs.length > 20000) throw new Error(`${path}.loop: başlangıç ve en az bir parça olmalı`);
+  for (const seg of segs as { to?: unknown; via?: unknown }[]) {
+    if (!isVec(seg?.to, 2) || (seg.via !== undefined && !isVec(seg.via, 2))) throw new Error(`${path}.loop.segs: geçersiz parça`);
+  }
 }
 
 function validateRefs(value: unknown, path: string, ok: (r: Record<string, unknown>) => boolean): void {
@@ -177,6 +207,14 @@ export function validateSolid(value: unknown, path = "solid", depth = 0): Solid 
       if (!isNum(s.thickness) || s.thickness <= 0) throw new Error(`${path}.thickness: pozitif olmalı`);
       validateRefs(s.faces, `${path}.faces`, (r) => isVec(r.center, 3) && typeof r.kind === "string");
       validateSolid(s.child, `${path}.child`, depth + 1);
+      return s as unknown as Solid;
+    case "loft":
+      if (!Array.isArray(s.sections) || s.sections.length < 2 || s.sections.length > 64) throw new Error(`${path}.sections: 2-64 kesit olmalı`);
+      s.sections.forEach((sec, i) => validateSection(sec, `${path}.sections[${i}]`));
+      return s as unknown as Solid;
+    case "sweep":
+      validateSection(s.profile, `${path}.profile`);
+      validateSection(s.path, `${path}.path`);
       return s as unknown as Solid;
     case "draft":
       if (!isNum(s.angle) || s.angle === 0 || Math.abs(s.angle) >= 89) throw new Error(`${path}.angle: sıfırdan farklı ve 89° altında olmalı`);

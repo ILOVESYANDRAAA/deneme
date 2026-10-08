@@ -47,6 +47,14 @@ export function showInputDialog(options: { title: string; fields: InputField[] }
   return new Promise((resolve) => {
     const previousFocus = document.activeElement as HTMLElement | null;
     const inputs = options.fields.map((f) => {
+      if (f.options?.length) {
+        const select = h(
+          "select",
+          { name: f.name, id: `dlg-${f.name}` },
+          ...f.options.map((o) => h("option", { value: o.value, selected: o.value === String(f.value ?? f.options![0].value) }, o.label)),
+        ) as unknown as HTMLInputElement;
+        return { f, input: select };
+      }
       const input = h("input", {
         type: f.type === "text" ? "text" : "number",
         value: f.value === undefined ? "" : String(f.value),
@@ -86,14 +94,14 @@ export function showInputDialog(options: { title: string; fields: InputField[] }
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       // Sadece kendi aralık denetimimiz engeller; adım (step) uyuşmazlığı engellemez.
-      for (const { f, input } of inputs) input.setCustomValidity(f.type === "text" ? "" : rangeError(f, input.value));
+      for (const { f, input } of inputs) input.setCustomValidity(f.type === "text" || f.options ? "" : rangeError(f, input.value));
       const invalid = inputs.find(({ input }) => input.validity.customError);
       if (invalid) {
         invalid.input.reportValidity();
         return;
       }
       const out: Record<string, number | string> = {};
-      for (const { f, input } of inputs) out[f.name] = f.type === "text" ? input.value : Number(input.value);
+      for (const { f, input } of inputs) out[f.name] = f.type === "text" || f.options ? input.value : Number(input.value);
       finish(out);
     });
     form.addEventListener("keydown", (e) => {
@@ -102,6 +110,6 @@ export function showInputDialog(options: { title: string; fields: InputField[] }
     });
     const overlay = h("div", { class: "overlay" }, form);
     document.body.append(overlay);
-    inputs[0]?.input.select();
+    (inputs[0]?.input instanceof HTMLSelectElement ? inputs[0].input.focus() : inputs[0]?.input.select());
   });
 }

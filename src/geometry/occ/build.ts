@@ -1,8 +1,10 @@
 import {
   cast,
   draw,
-  getOC,
   drawCircle,
+  genericSweep,
+  getOC,
+  loft,
   makeBaseBox,
   makeCylinder,
   makeSphere,
@@ -13,7 +15,7 @@ import {
   type Face,
   type Shape3D,
 } from "replicad";
-import type { EdgeRef, FaceRef, Loop, Solid, Vec2, Vec3 } from "../../core/solid";
+import type { EdgeRef, FaceRef, Loop, Section, Solid, Vec2, Vec3 } from "../../core/solid";
 import { solidKey } from "../../core/solid";
 import type { BrepInfo } from "../brep";
 import type { MeshData } from "../evaluate";
@@ -44,6 +46,23 @@ function loopDrawing(loop: Loop): Drawing {
     pen = seg.via ? pen.threePointsArcTo(seg.to, seg.via) : pen.lineTo(seg.to);
   });
   return pen.close();
+}
+
+/** Kesiti (kapalı ya da açık) tel olarak, matrisle dünyaya yerleştirilmiş hâlde üretir. */
+function sectionWire(sec: Section, closed: boolean) {
+  let wire: Shape3D;
+  if ("circle" in sec.loop) {
+    wire = (drawCircle(sec.loop.circle.r).translate(sec.loop.circle.c[0], sec.loop.circle.c[1]).sketchOnPlane("XY") as unknown as { wire: Shape3D }).wire;
+  } else {
+    let pen = draw(sec.loop.from);
+    const last = sec.loop.segs.length - 1;
+    sec.loop.segs.forEach((seg, i) => {
+      if (closed && i === last && !seg.via) return; // `close()` son çizgiyi çizer
+      pen = seg.via ? pen.threePointsArcTo(seg.to, seg.via) : pen.lineTo(seg.to);
+    });
+    wire = ((closed ? pen.close() : pen.done()).sketchOnPlane("XY") as unknown as { wire: Shape3D }).wire;
+  }
+  return applyMatrix(wire, sec.matrix) as unknown as Parameters<typeof loft>[0][number];
 }
 
 function polygonLoop(poly: Vec2[]): Loop {
@@ -325,6 +344,20 @@ export class OccEvaluator {
         } catch (e) {
           const what = solid.kind === "fillet" ? "Yuvarlatma" : "Pah";
           throw new Error(`${what} uygulanamadı: ${solid.kind === "fillet" ? "yarıçap" : "mesafe"} çok büyük olabilir ya da kenarlar uygun değil`, { cause: e });
+        }
+      }
+      case "loft": {
+        try {
+          return tidy(loft(solid.sections.map((sec) => sectionWire(sec, true)), { ruled: solid.ruled ?? false }) as Shape3D);
+        } catch (e) {
+          throw new Error("Loft oluşturulamadı: kesitler (eskizler) kapalı olmalı ve birbiriyle çakışmamalı", { cause: e });
+        }
+      }
+      case "sweep": {
+        try {
+          return tidy(genericSweep(sectionWire(solid.profile, true) as never, sectionWire(solid.path, false) as never, {}) as Shape3D);
+        } catch (e) {
+          throw new Error("Süpürme oluşturulamadı: profil kapalı, yol ise tek parça açık bir eğri olmalı; profil yolun başına yakın durmalı", { cause: e });
         }
       }
       case "draft": {

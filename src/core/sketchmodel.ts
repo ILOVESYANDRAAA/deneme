@@ -409,6 +409,110 @@ export function sketchDataLoops(d: SketchData): Loop[] {
   return loops;
 }
 
+/**
+ * Eskizdeki tek açık yol (süpürme yolu): uç uca bağlı çizgi / yay zinciri. Dallanma, birden çok zincir
+ * ya da kapalı şekil varsa null döner. Kapalı bir zincirse (uç yok) null; yol açık olmalıdır.
+ */
+export function sketchDataChain(d: SketchData): Loop | null {
+  const pm = pointMap(d);
+  const edges: ExactEdge[] = [];
+  for (const c of d.curves) {
+    if (c.construction || c.kind === "point") continue;
+    const e = exactEdge(pm, c);
+    if (!e) return null; // daire, elips, kapalı eğri: yol değil
+    edges.push(e);
+  }
+  if (!edges.length) return null;
+  const near = (a: Vec2, b: Vec2) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= JOIN;
+  const ends = (e: ExactEdge): [Vec2, Vec2] => [e.pts[0], e.pts[e.pts.length - 1]];
+  const degree = (p: Vec2) => edges.reduce((n, e) => n + ends(e).filter((q) => near(q, p)).length, 0);
+  const endpoints = edges.flatMap(ends).filter((p) => degree(p) === 1);
+  if (edges.flatMap(ends).some((p) => degree(p) > 2) || endpoints.length !== 2) return null;
+  const used = new Set<number>();
+  const chain: ExactEdge[] = [];
+  let at = endpoints[0];
+  for (let guard = 0; guard <= edges.length; guard++) {
+    const next = edges.findIndex((e, i) => !used.has(i) && ends(e).some((q) => near(q, at)));
+    if (next < 0) break;
+    used.add(next);
+    const e = edges[next];
+    const oriented = near(e.pts[0], at) ? e : reversedEdge(e);
+    chain.push(oriented);
+    at = oriented.pts[oriented.pts.length - 1];
+  }
+  if (chain.length !== edges.length) return null; // birbirinden kopuk parçalar var
+  const segs: { to: Vec2; via?: Vec2 }[] = [];
+  for (const e of chain) for (let i = 0; i < e.vias.length; i++) segs.push({ to: e.pts[i + 1], ...(e.vias[i] ? { via: e.vias[i] } : {}) });
+  return { from: chain[0].pts[0], segs };
+}
+
+/** Üç noktadan geçen yayın (a → b, `via` üzerinden) örneklenmiş noktaları; a hariç, b dahil. */
+function sampleThreePointArc(a: Vec2, via: Vec2, b: Vec2, perCircle = 48): Vec2[] {
+  const g = circleFrom3(a, via, b);
+  if (!g) return [b];
+  const [cx, cy] = g.c;
+  const ang = (p: Vec2) => Math.atan2(p[1] - cy, p[0] - cx);
+  const a0 = ang(a);
+  let sweep = ang(b) - a0;
+  const sv = ang(via) - a0;
+  const wrap = (x: number) => ((x % TAU) + TAU) % TAU;
+  // `via`, a ile b arasındaki yayın üzerindedir: saat yönünün tersi mi (pozitif) yoksa tersi mi?
+  const ccw = wrap(sv) < wrap(sweep);
+  sweep = ccw ? wrap(sweep) : wrap(sweep) - TAU;
+  const n = Math.max(2, Math.ceil((Math.abs(sweep) / TAU) * perCircle));
+  const out: Vec2[] = [];
+  for (let i = 1; i <= n; i++) {
+    const t = a0 + (sweep * i) / n;
+    out.push(i === n ? b : [cx + g.r * Math.cos(t), cy + g.r * Math.sin(t)]);
+  }
+  return out;
+}
+
+/** Açık yolu (çizgi + yay) örneklenmiş çoklu çizgiye çevirir. */
+export function chainPoints(chain: Loop): Vec2[] {
+  if (!("segs" in chain)) return [];
+  const pts: Vec2[] = [chain.from];
+  let prev = chain.from;
+  for (const seg of chain.segs) {
+    pts.push(...(seg.via ? sampleThreePointArc(prev, seg.via, seg.to) : [seg.to]));
+    prev = seg.to;
+  }
+  return pts;
+}
+
+/**
+ * Açık yolu `thickness` kalınlığında kapalı bir çokgene çevirir (kaburga profili): yolun iki yanına
+ * `thickness / 2` ofset, köşelerde gönyeli birleşim, uçlar dik kesik. Çok keskin dönüşlerde gönye kısaltılır.
+ */
+export function thickenChain(chain: Loop, thickness: number): Vec2[] {
+  const pts = chainPoints(chain).filter((p, i, a) => i === 0 || Math.hypot(p[0] - a[i - 1][0], p[1] - a[i - 1][1]) > 1e-9);
+  if (pts.length < 2) throw new Error("Yol en az iki noktalı olmalı");
+  const h = thickness / 2;
+  const normal = (a: Vec2, b: Vec2): Vec2 => {
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    return [-(b[1] - a[1]) / l, (b[0] - a[0]) / l];
+  };
+  const offsetAt = (i: number): Vec2 => {
+    if (i === 0) return normal(pts[0], pts[1]);
+    if (i === pts.length - 1) return normal(pts[i - 1], pts[i]);
+    const n1 = normal(pts[i - 1], pts[i]);
+    const n2 = normal(pts[i], pts[i + 1]);
+    const k = 1 + n1[0] * n2[0] + n1[1] * n2[1];
+    const m: Vec2 = [n1[0] + n2[0], n1[1] + n2[1]];
+    // Gönye uzunluğu 1/cos(θ/2); aşırı keskin dönüşlerde sınırlanır.
+    const scale = 1 / Math.max(k, 0.2);
+    return [m[0] * scale, m[1] * scale];
+  };
+  const left: Vec2[] = [];
+  const right: Vec2[] = [];
+  pts.forEach((p, i) => {
+    const o = offsetAt(i);
+    left.push([p[0] + o[0] * h, p[1] + o[1] * h]);
+    right.push([p[0] - o[0] * h, p[1] - o[1] * h]);
+  });
+  return [...left, ...right.reverse()];
+}
+
 /** Ekranda çizim için her eğrinin parçaları. */
 export function curveSegments(d: SketchData, c: SCurve, pm = pointMap(d)): [Vec2, Vec2][] {
   if (c.kind === "point") return [];

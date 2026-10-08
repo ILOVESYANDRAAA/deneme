@@ -150,7 +150,7 @@ export class SugarDocument {
       const parent = this.parentOf(id);
       if (parent && parent.id !== feature.id) throw new Error(`${input.name} zaten başka bir işlemde kullanılıyor`);
       if (this.dependsOn(id, feature.id)) throw new Error(`${input.name} bu özelliğe bağlı; döngü oluşur`);
-      if (id === feature.sketch) {
+      if (id === feature.sketch || id === feature.path || feature.sections?.includes(id)) {
         if (input.type !== "sketch") throw new Error(`${input.name} bir eskiz değil`);
       } else if (!isSolidFeature(input)) {
         throw new Error(`${input.name} bir eskiz; önce Ekstrüzyon ya da Döndürme uygulayın`);

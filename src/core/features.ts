@@ -1,6 +1,6 @@
 import { PLANES, planeMatrix, type PlaneFrame, type PlaneName, type SketchEntity } from "./sketch";
-import { fromLegacyEntities, sketchDataLoops, sketchDataProfiles, type SketchData } from "./sketchmodel";
-import type { BooleanOp, EdgeRef, FaceRef, Loop, Solid, Vec2, Vec3 } from "./solid";
+import { fromLegacyEntities, pointMap, sketchDataChain, sketchDataLoops, sketchDataProfiles, thickenChain, type SketchData } from "./sketchmodel";
+import type { BooleanOp, EdgeRef, FaceRef, Loop, Section, Solid, Vec2, Vec3 } from "./solid";
 
 /** Bir parametrenin özellik panelinde nasıl gösterileceği. */
 export interface ParamSpec {
@@ -34,8 +34,12 @@ export interface Feature {
   sketchData?: SketchData;
   /** Eski (v1) dosyalardaki eskiz öğeleri; açılırken `sketchData`'ya çevrilir. */
   entities?: SketchEntity[];
-  /** Ekstrüzyon / döndürme: kullanılan eskizin kimliği. */
+  /** Ekstrüzyon / döndürme / süpürme: kullanılan (profil) eskizin kimliği. */
   sketch?: string;
+  /** Loft: sırayla bağlanan kesit eskizlerinin kimlikleri. */
+  sections?: string[];
+  /** Süpürme: yolu tanımlayan açık eskizin kimliği. */
+  path?: string;
   /** Döndürme ekseni: eskizin dikey (V) ya da yatay (U) ekseni. */
   axis?: RevolveAxis;
   /** Ekstrüzyon / döndürme sonucu yeni gövde mi, yoksa `target` gövdeyle birleşim / kesme / kesişim mi? */
@@ -85,12 +89,13 @@ export const HOLE_LABELS: Record<HoleType, string> = {
   countersink: "Konik havşa",
 };
 
-export type RevolveAxis = "U" | "V";
+/** Döndürme ekseni: eskizin dikey (V) / yatay (U) ekseni ya da eskizdeki bir çizgi (`line:<eğri kimliği>`). */
+export type RevolveAxis = "U" | "V" | `line:${string}`;
 export type WorldAxis = "X" | "Y" | "Z";
 export type BodyOperation = "new" | "join" | "cut" | "intersect";
 export type ExtrudeDirection = "one" | "symmetric";
 
-export const AXIS_LABELS: Record<RevolveAxis, string> = {
+export const AXIS_LABELS: Record<"U" | "V", string> = {
   V: "Dikey eksen (V)",
   U: "Yatay eksen (U)",
 };
@@ -125,6 +130,9 @@ export const FEATURE_LABELS = {
   circularPattern: "Dairesel Desen",
   scale: "Ölçek",
   hole: "Delik",
+  loft: "Loft",
+  sweep: "Süpürme",
+  rib: "Kaburga",
 } as const;
 
 export type BuiltinFeatureType = keyof typeof FEATURE_LABELS;
@@ -191,6 +199,12 @@ export const FEATURE_PARAMS: Record<string, Record<string, ParamSpec>> = {
     angle: { label: "Toplam açı (°)", default: 360, min: 0.1, max: 360, step: 15 },
   },
   scale: { factor: { label: "Ölçek oranı", default: 2, min: 0.001, max: 1000, step: 0.1 } },
+  rib: {
+    thickness: { label: "Kalınlık", default: 2, min: 0.001, step: 0.5 },
+    distance: { label: "Yükseklik (− ters yön)", default: 10, step: 1 },
+  },
+  loft: { ruled: { label: "Düz geçiş (1: düz, 0: yumuşak)", default: 0, min: 0, max: 1, step: 1, integer: true } },
+  sweep: {},
   hole: {
     diameter: { label: "Çap", default: 8, min: 0.01, step: 0.5 },
     depth: { label: "Derinlik (0 = boydan boya)", default: 10, min: 0, step: 1 },
@@ -213,6 +227,8 @@ export function featureRefs(f: Feature): string[] {
   return [
     ...(f.operands ?? []),
     ...(f.sketch ? [f.sketch] : []),
+    ...(f.sections ?? []),
+    ...(f.path ? [f.path] : []),
     ...(f.target ? [f.target] : []),
     ...(f.source ? [f.source] : []),
   ];
@@ -333,8 +349,8 @@ export function featureSolid(
     let base: Solid;
     if (feature.type === "sketch") {
       throw new Error(`${feature.name}: eskiz bir katı değildir; önce Ekstrüzyon ya da Döndürme uygulayın`);
-    } else if (feature.type === "extrude" || feature.type === "revolve") {
-      base = sketchFeatureSolid(feature, byId);
+    } else if (["extrude", "revolve", "rib", "loft", "sweep"].includes(feature.type)) {
+      base = feature.type === "loft" || feature.type === "sweep" ? sectionFeatureSolid(feature, byId) : sketchFeatureSolid(feature, byId);
       const op = feature.operation ?? "new";
       if (op !== "new") {
         const target = feature.target ? byId.get(feature.target) : undefined;
@@ -386,6 +402,14 @@ function profilesOf(feature: Feature, byId: Map<string, Feature>): { sketch: Fea
   const sketch = feature.sketch ? byId.get(feature.sketch) : undefined;
   if (!sketch || sketch.type !== "sketch") throw new Error(`${feature.name}: eskiz bulunamadı`);
   const data = sketchDataOf(sketch);
+  if (feature.type === "rib") {
+    // Kaburga: açık yol kalınlaştırılıp kapalı profile çevrilir.
+    const chain = sketchDataChain(data);
+    if (!chain) throw new Error(`${feature.name}: "${sketch.name}" tek parça, açık bir yol içermeli (uç uca bağlı çizgi / yay)`);
+    const thickness = feature.params.thickness ?? 0;
+    if (!(thickness > 0)) throw new Error(`${feature.name}: kalınlık pozitif olmalı`);
+    return { sketch, profiles: [thickenChain(chain, thickness)], loops: [] };
+  }
   const profiles = sketchDataProfiles(data);
   const loops = sketchDataLoops(data);
   if (profiles.length === 0) {
@@ -535,13 +559,44 @@ function bodyFeatureSolid(feature: Feature, child: Solid): Solid {
   }
 }
 
+function sketchSection(sketch: Feature | undefined, owner: Feature, what: string): { sketch: Feature; section: (loop: Loop) => Section } {
+  if (!sketch || sketch.type !== "sketch") throw new Error(`${owner.name}: ${what} eskizi bulunamadı`);
+  const matrix = planeMatrix(sketch.frame ?? sketch.plane ?? "XY", sketch.params.offset ?? 0);
+  return { sketch, section: (loop) => ({ matrix, loop }) };
+}
+
+/** Loft (sıralı kapalı kesitler) ve süpürme (profil + yol) katıları. */
+function sectionFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid {
+  const closed = (sketch: Feature, owner: Feature): Loop => {
+    const loops = sketchDataLoops(sketchDataOf(sketch));
+    if (loops.length !== 1) {
+      throw new Error(`${owner.name}: "${sketch.name}" tek bir kapalı şekil içermeli (${loops.length ? `${loops.length} tane var` : "kapalı şekil yok"})`);
+    }
+    return loops[0];
+  };
+  if (feature.type === "loft") {
+    const ids = feature.sections ?? [];
+    if (ids.length < 2) throw new Error(`${feature.name}: loft için en az iki kesit eskizi gerekir`);
+    const sections = ids.map((id) => {
+      const { sketch, section } = sketchSection(byId.get(id), feature, "kesit");
+      return section(closed(sketch, feature));
+    });
+    return { kind: "loft", sections, ruled: (feature.params.ruled ?? 0) >= 1 };
+  }
+  const profile = sketchSection(feature.sketch ? byId.get(feature.sketch) : undefined, feature, "profil");
+  const path = sketchSection(feature.path ? byId.get(feature.path) : undefined, feature, "yol");
+  const chain = sketchDataChain(sketchDataOf(path.sketch));
+  if (!chain) throw new Error(`${feature.name}: "${path.sketch.name}" tek parça, açık bir yol olmalı (uç uca bağlı çizgi / yay)`);
+  return { kind: "sweep", profile: profile.section(closed(profile.sketch, feature)), path: path.section(chain) };
+}
+
 /** Eskizden ekstrüzyon / döndürme katısı. Eskiz içinde iç içe şekiller delik açar. */
 function sketchFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid {
   const { sketch, profiles, loops } = profilesOf(feature, byId);
   const plane = sketch.plane ?? "XY";
   if (!(plane in PLANES)) throw new Error(`${sketch.name}: bilinmeyen düzlem ${plane}`);
   let local: Solid;
-  if (feature.type === "extrude") {
+  if (feature.type === "extrude" || feature.type === "rib") {
     const distance = feature.params.distance ?? 10;
     if (!Number.isFinite(distance) || distance === 0) throw new Error(`${feature.name}: mesafe sıfır olamaz`);
     local = { kind: "extrude", polygons: profiles, height: Math.abs(distance), fillRule: "EvenOdd", loops };
@@ -552,8 +607,32 @@ function sketchFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid
     // Manifold Y ekseni etrafında döndürür; U ekseni için profilin eksenleri yer değiştirir.
     const swap = (p: Vec2): Vec2 => [p[1], p[0]];
     const flip = (p: Vec2): Vec2 => [-p[0], p[1]];
+    let back: number[] | null = null;
     let polys = axis === "V" ? profiles : profiles.map((p) => p.map(swap).reverse());
     let exact = axis === "V" ? loops : mapLoops(loops, swap);
+    if (axis.startsWith("line:")) {
+      // Eksen eskizdeki bir çizgi: profil, çizgi +v (dikey) ekseni olacak şekilde kaydırılıp döndürülür; sonuç geri taşınır.
+      const data = sketchDataOf(sketch);
+      const curve = data.curves.find((c) => c.id === axis.slice(5));
+      if (!curve || curve.kind !== "line") throw new Error(`${feature.name}: eksen çizgisi bulunamadı (silinmiş olabilir)`);
+      const pm = pointMap(data);
+      const p0 = pm.get(curve.p1)!;
+      const p1 = pm.get(curve.p2)!;
+      const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+      if (!(len > 1e-9)) throw new Error(`${feature.name}: eksen çizgisinin uzunluğu sıfır`);
+      const dx = (p1[0] - p0[0]) / len;
+      const dy = (p1[1] - p0[1]) / len;
+      // Çizgi yönü d → (0, 1): R(p − p0), R = [[dy, −dx], [dx, dy]]
+      const toAxis = (p: Vec2): Vec2 => {
+        const x = p[0] - p0[0];
+        const y = p[1] - p0[1];
+        return [dy * x - dx * y, dx * x + dy * y];
+      };
+      polys = profiles.map((p) => p.map(toAxis));
+      exact = mapLoops(loops, toAxis);
+      // Geri dönüşüm: canlı (0,1) → d ve başlangıç p0 (yerel eskiz koordinatlarında, z değişmez).
+      back = [dy, -dx, 0, 0, dx, dy, 0, 0, 0, 0, 1, 0, p0[0], p0[1], 0, 1];
+    }
     // Profil tamamen eksenin öbür tarafındaysa aynala (kullanıcı hangi tarafa çizerse çizsin çalışsın).
     if (Math.max(...polys.flat().map((p) => p[0])) <= 0) {
       polys = polys.map((p) => p.map(flip).reverse());
@@ -561,9 +640,10 @@ function sketchFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid
     }
     local = {
       kind: "transform",
-      matrix: axis === "V" ? REVOLVE_V_TO_LOCAL : REVOLVE_U_TO_LOCAL,
+      matrix: axis === "U" ? REVOLVE_U_TO_LOCAL : REVOLVE_V_TO_LOCAL,
       child: { kind: "revolve", polygons: polys, angle: feature.params.angle ?? 360, segments: 96, fillRule: "EvenOdd", loops: exact },
     };
+    if (back) local = { kind: "transform", matrix: back, child: local };
   }
   return { kind: "transform", matrix: planeMatrix(sketch.frame ?? plane, sketch.params.offset ?? 0), child: local };
 }

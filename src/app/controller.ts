@@ -25,7 +25,7 @@ import {
 } from "../core/features";
 import { PLANES, type PlaneRef } from "../core/sketch";
 import type { SketchSolver } from "../core/solver";
-import { emptySketch } from "../core/sketchmodel";
+import { emptySketch, sketchDataChain, sketchDataLoops } from "../core/sketchmodel";
 import type { BooleanOp, EdgeRef, FaceRef, Solid, Vec3 } from "../core/solid";
 import type { BrepInfo } from "../geometry/brep";
 import type { MeshData } from "../geometry/evaluate";
@@ -191,7 +191,7 @@ export class SugarApp implements HostServices {
   }
 
   /** Seçili (ya da tek kullanılmamış) eskizden ekstrüzyon / döndürme oluşturur. */
-  addSketchFeature(type: "extrude" | "revolve", sketchId?: string): Feature | null {
+  addSketchFeature(type: "extrude" | "revolve" | "rib", sketchId?: string): Feature | null {
     const id = sketchId ?? this.pickSketch();
     if (!id) {
       this.showMessage(
@@ -232,6 +232,57 @@ export class SugarApp implements HostServices {
       },
       FEATURE_LABELS[type],
     );
+    this.document.setSelection([feature.id]);
+    return feature;
+  }
+
+  /** Seçili eskizler (seçim sırasıyla); en az `min` tane yoksa uyarır. */
+  private selectedSketches(what: string, min: number): Feature[] | null {
+    const sketches = this.document.getSelection().map((id) => this.document.get(id)).filter((f): f is Feature => f?.type === "sketch");
+    if (sketches.length < min || sketches.length !== this.document.getSelection().length) {
+      this.showMessage(`${what}: Ctrl ile ${min === 2 ? "en az iki" : "gerekli"} eskizi seçin (ağaçtan ya da zaman çizelgesinden)`, "warning");
+      return null;
+    }
+    if (sketches.some((sk) => this.document.parentOf(sk.id))) {
+      this.showMessage(`${what}: seçilen eskizlerden biri zaten başka bir özellikte kullanılıyor`, "warning");
+      return null;
+    }
+    return sketches;
+  }
+
+  /** Seçili eskizleri (seçim sırasıyla) loft ile birleştirir. */
+  addLoftFeature(sketchIds?: string[]): Feature | null {
+    if (sketchIds) this.document.setSelection(sketchIds);
+    const sketches = this.selectedSketches("Loft", 2);
+    if (!sketches) return null;
+    const feature = this.document.add(
+      { type: "loft", sections: sketches.map((sk) => sk.id), params: Object.fromEntries(Object.entries(FEATURE_PARAMS.loft).map(([k, spec]) => [k, spec.default])) },
+      FEATURE_LABELS.loft,
+    );
+    this.document.setSelection([feature.id]);
+    return feature;
+  }
+
+  /** İki eskizden süpürme: kapalı şekil içeren profil, açık zincir içeren yol sayılır (seçim sırası önemsiz). */
+  addSweepFeature(sketchIds?: string[]): Feature | null {
+    if (sketchIds) this.document.setSelection(sketchIds);
+    const sketches = this.selectedSketches("Süpürme", 2);
+    if (!sketches) return null;
+    if (sketches.length !== 2) {
+      this.showMessage("Süpürme: tam iki eskiz seçin (profil ve yol)", "warning");
+      return null;
+    }
+    const kinds = sketches.map((sk) => {
+      const d = sketchDataOf(sk);
+      return { sk, closed: sketchDataLoops(d).length > 0, open: sketchDataChain(d) !== null };
+    });
+    const profile = kinds.find((k) => k.closed && !k.open);
+    const path = kinds.find((k) => k.open && !k.closed);
+    if (!profile || !path || profile === path) {
+      this.showMessage("Süpürme: bir eskiz kapalı şekil (profil), diğeri açık bir çizgi / yay zinciri (yol) içermeli", "warning");
+      return null;
+    }
+    const feature = this.document.add({ type: "sweep", sketch: profile.sk.id, path: path.sk.id, params: {} }, FEATURE_LABELS.sweep);
     this.document.setSelection([feature.id]);
     return feature;
   }
@@ -514,6 +565,13 @@ function registerBuiltinCommands(app: SugarApp): void {
   c.register({ id: "feature.extrude", title: "Ekstrüzyon", category: "Katı", keybinding: "E" }, () =>
     app.addSketchFeature("extrude"),
   );
+  c.register({ id: "feature.rib", title: "Kaburga", category: "Katı" }, async () => {
+    const f = app.addSketchFeature("rib");
+    // Tek aday gövde varsa kaburga ona birleştirilir.
+    if (f && app.targetCandidates(f.id).length === 1) await app.setOperation(f.id, "join");
+  });
+  c.register({ id: "feature.loft", title: "Loft", category: "Katı" }, () => app.addLoftFeature());
+  c.register({ id: "feature.sweep", title: "Süpürme", category: "Katı" }, () => app.addSweepFeature());
   c.register({ id: "feature.revolve", title: "Döndürme", category: "Katı", keybinding: "Shift+R" }, () =>
     app.addSketchFeature("revolve"),
   );

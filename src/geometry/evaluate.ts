@@ -90,8 +90,10 @@ export class SolidEvaluator {
       case "chamfer":
       case "shell":
       case "draft":
+      case "loft":
+      case "sweep":
         // Bu tarifler session tarafından OpenCascade işçisine yönlendirilir; buraya gelmemeli.
-        throw new Error("Yuvarlatma / pah / kabuk için OpenCascade çekirdeği gerekir");
+        throw new Error("Yuvarlatma, pah, kabuk, loft ve süpürme için OpenCascade çekirdeği gerekir");
     }
   }
 

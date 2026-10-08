@@ -834,3 +834,96 @@ test("Açılı Yüzey: yan yüzlere eğim ver", async ({ page }) => {
   await page.screenshot({ path: `${S}/22-acili-yuzey.png` });
   expect(errors).toEqual([]);
 });
+
+test("Loft ve Süpürme düğmeleri", async ({ page }) => {
+  test.setTimeout(90_000);
+  const errors = await open(page);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+  // Eskizleri veri olarak kur (çizim akışı başka testlerde sınanıyor)
+  await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    const m = (window as any).sugarcadModel;
+    const circle = (plane: string, offset: number, r: number) => {
+      const sk = app.createSketch(plane, offset);
+      const ed = new m.SketchEdit();
+      ed.circle(ed.point([0, 0]), r);
+      app.document.update(sk.id, { sketchData: ed.result() });
+      return sk.id;
+    };
+    const a = circle("XY", 0, 6);
+    const b = circle("XY", 20, 3);
+    (window as any).__ids = [a, b];
+    app.document.setSelection([a, b]);
+  });
+  await expect(toolbar.getByRole("button", { name: "Loft", exact: true })).toBeEnabled();
+  await toolbar.getByRole("button", { name: "Loft", exact: true }).click();
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "sketch", "loft"]);
+  const volume = (index: number) =>
+    page.evaluate((i) => {
+      const app = (window as any).sugarcad;
+      return app.meshes.get(app.document.all()[i].id)?.volume ?? 0;
+    }, index);
+  await expect.poll(() => volume(2)).toBeGreaterThan(0);
+  // Kesik koni hacmi: π h (R² + R r + r²) / 3
+  expect(await volume(2)).toBeCloseTo((Math.PI * 20 * (36 + 18 + 9)) / 3, -1);
+  await expect(page.locator(".properties")).toContainText("Kesitler: Eskiz 1 → Eskiz 2");
+  await page.screenshot({ path: `${S}/23-loft.png` });
+
+  // Süpürme: profil + yol
+  await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    const m = (window as any).sugarcadModel;
+    const path = app.createSketch("XZ");
+    const ed = new m.SketchEdit();
+    ed.line(ed.point([40, 0]), ed.point([40, 30]));
+    app.document.update(path.id, { sketchData: ed.result() });
+    const prof = app.createSketch("XY");
+    const ed2 = new m.SketchEdit();
+    ed2.circle(ed2.point([40, 0]), 4);
+    app.document.update(prof.id, { sketchData: ed2.result() });
+    app.document.setSelection([prof.id, path.id]);
+  });
+  await toolbar.getByRole("button", { name: "Süpürme", exact: true }).click();
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "sketch", "loft", "sketch", "sketch", "sweep"]);
+  await expect.poll(() => volume(5)).toBeGreaterThan(0);
+  expect(await volume(5)).toBeCloseTo(Math.PI * 16 * 30, -1);
+  expect(errors).toEqual([]);
+});
+
+test("Açılı düzlem ve 3 noktalı düzlemde eskiz", async ({ page }) => {
+  const errors = await open(page);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+  // Açılı düzlem: XZ düzlemini yatay eksen etrafında 30° döndür
+  await toolbar.getByRole("button", { name: "Açılı Düzlem" }).click();
+  const dialog = page.getByRole("dialog", { name: "Açılı Düzlemde Eskiz" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Taban düzlem", { exact: true }).selectOption("XZ");
+  await dialog.getByLabel("Açı (°)").fill("30");
+  await dialog.getByRole("button", { name: "Tamam" }).click();
+  await expect(page.locator(".statusbar")).toContainText("Eskiz · Yüzey");
+  const frame = await page.evaluate(() => (window as any).sugarcad.document.all()[0].frame);
+  expect(frame.origin).toEqual([0, 0, 0]);
+  expect(frame.u).toEqual([1, 0, 0]);
+  expect(Math.hypot(...(frame.n as number[]))).toBeCloseTo(1, 6);
+  expect(frame.n[0]).toBe(0);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+
+  // 3 noktalı düzlem
+  await toolbar.getByRole("button", { name: "3 Nokta" }).click();
+  const hud = page.getByRole("dialog", { name: "3 Noktalı Düzlem" });
+  await expect(hud).toBeVisible();
+  await page.evaluate(() => {
+    const t = (window as any).sugarcadUi.planePoints;
+    t.addPoint([0, 0, 5]);
+    t.addPoint([10, 0, 5]);
+  });
+  await expect(hud).toContainText("2. nokta");
+  // Doğrusal üçüncü nokta uyarı verir, düzlem açılmaz
+  await page.evaluate(() => (window as any).sugarcadUi.planePoints.addPoint([20, 0, 5]));
+  await expect(page.locator(".toast.warning")).toContainText("aynı doğru üzerinde");
+  await page.evaluate(() => (window as any).sugarcadUi.planePoints.addPoint([0, 10, 5]));
+  await expect(hud).toBeHidden();
+  const frame2 = await page.evaluate(() => (window as any).sugarcad.document.all()[1].frame);
+  expect(frame2).toEqual({ origin: [0, 0, 5], u: [1, 0, 0], v: [0, 1, 0], n: [0, 0, 1] });
+  expect(errors).toEqual([]);
+});
