@@ -140,6 +140,8 @@ export class Viewport {
   private sketchGrid: THREE.GridHelper;
   private preview: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private overlay = new THREE.Group();
+  /** Seçim araçlarının (kenar / yüz seçici) çizim katmanı; içeriğini araç yönetir. */
+  readonly layer = new THREE.Group();
   private activeSketch: string | null = null;
   private sketchOptions = { grid: true, profiles: true };
   /** Seçili öğeler (eğri ve nokta kimlikleri) ve imlecin üstündeki öğe. */
@@ -262,7 +264,8 @@ export class Viewport {
     key.position.set(0.4, 0.6, 1);
     this.camera.add(key);
     this.overlay.renderOrder = 20;
-    this.scene.add(this.camera, this.sketchGroup, this.sketchGrid, this.preview, this.overlay);
+    this.layer.renderOrder = 30;
+    this.scene.add(this.camera, this.sketchGroup, this.sketchGrid, this.preview, this.overlay, this.layer);
   }
 
   // ---- fare ----
@@ -337,6 +340,12 @@ export class Viewport {
     this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
     const hit = this.raycaster.intersectObjects(this.visibleMeshes(), false).find((h) => this.unclipped(h.point));
     return (hit?.object.userData.featureId as string | undefined) ?? null;
+  }
+
+  /** Işını verilen nesnelere atar (kesit düzleminin gizlediği kısımlar sayılmaz). */
+  raycast(clientX: number, clientY: number, objects: THREE.Object3D[]): THREE.Intersection | null {
+    this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
+    return this.raycaster.intersectObjects(objects, false).find((h) => this.unclipped(h.point)) ?? null;
   }
 
   private unclipped(p: THREE.Vector3): boolean {

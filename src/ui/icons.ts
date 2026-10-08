@@ -61,6 +61,8 @@ export const ICONS = {
   sketchRotate: svg('<path d="M13 8a5 5 0 1 1-1.8-3.8"/><path d="M13.5 2v3.5H10"/>'),
   sketchPatternRect: svg('<rect x="1.5" y="1.5" width="4" height="4"/><rect x="9.5" y="1.5" width="4" height="4" stroke-dasharray="1.6 1.2"/><rect x="1.5" y="9.5" width="4" height="4" stroke-dasharray="1.6 1.2"/><rect x="9.5" y="9.5" width="4" height="4" stroke-dasharray="1.6 1.2"/>'),
   sketchPatternCircular: svg('<circle cx="8" cy="3.5" r="1.8"/><circle cx="12.2" cy="10.5" r="1.8" stroke-dasharray="1.6 1.2"/><circle cx="3.8" cy="10.5" r="1.8" stroke-dasharray="1.6 1.2"/>'),
+  chamfer: svg('<path d="M2.5 13.5V6.5l4-4h7"/><path d="M2.5 5V2.5H5" stroke-dasharray="1.4 1.2"/>'),
+  shell: svg('<rect x="1.5" y="4.5" width="13" height="9"/><path d="M4 7.5h8v4.5H4Z" stroke-dasharray="1.6 1.2"/><path d="M1.5 4.5 4 2h10.5v9.5L12 14"/>'),
   fillet: svg('<path d="M2.5 13.5V8a5.5 5.5 0 0 1 5.5-5.5h5.5"/><path d="M2.5 5V2.5H5" stroke-dasharray="1.4 1.2"/>'),
   construction: svg('<path d="M2 14 14 2" stroke-dasharray="2 1.6"/><circle cx="8" cy="8" r="4.5" stroke-dasharray="2 1.6"/>'),
   sketchMirror: svg('<path d="M8 1.5v13" stroke-dasharray="1.6 1.4"/><path d="M6 4 2.5 12H6ZM10 4l3.5 8H10Z"/>'),

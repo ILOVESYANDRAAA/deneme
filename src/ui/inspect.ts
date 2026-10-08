@@ -8,7 +8,7 @@ const fmt = (n: number) => formatNumber(Number(n.toFixed(3)));
 const fmtPoint = (p: Vec3) => `(${p.map(fmt).join(", ")})`;
 
 /** Görünümün üst ortasında duran küçük araç kutusu. */
-function hudBox(title: string, svg: string, onClose: () => void, ...children: HTMLElement[]): HTMLElement {
+export function hudBox(title: string, svg: string, onClose: () => void, ...children: HTMLElement[]): HTMLElement {
   return h(
     "div",
     { class: "inspect-hud", attrs: { role: "dialog", "aria-label": title } },

@@ -578,3 +578,102 @@ test("düzenleme araçları: kırp, ofset, kopyala ve desen", async ({ page }) =
   await expect(page.locator(".toast.error")).toContainText("Önce eskizde öğe seçin");
   expect(errors).toEqual([]);
 });
+
+test("Yuvarlatma ve Kabuk: kenar / yüz seç, değer gir, uygula", async ({ page }) => {
+  test.setTimeout(90_000);
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 20]);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+
+  // Gövde seçili değilken uyarı
+  await page.evaluate(() => (window as any).sugarcad.document.setSelection([]));
+  await expect(toolbar.getByRole("button", { name: "Yuvarlatma", exact: true })).toBeDisabled();
+
+  // Yuvarlatma: iki dikey kenarı gerçek fare tıklamasıyla seç
+  await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    app.document.setSelection([app.document.all()[1].id]);
+  });
+  await toolbar.getByRole("button", { name: "Yuvarlatma", exact: true }).click();
+  const hud = page.getByRole("dialog", { name: "Yuvarlatma" });
+  await expect(hud).toBeVisible();
+  await expect(hud).toContainText("OpenCascade çekirdeği hazırlanıyor");
+  await expect(hud).toContainText("Yuvarlatılacak kenarlara tıklayın", { timeout: 60_000 });
+  const verticals = await page.evaluate(() => {
+    const ui = (window as any).sugarcadUi;
+    return ui.brep.described.edges
+      .map((e: any, i: number) => ({ i, ref: e.ref }))
+      .filter((e: any) => e.ref.dir && Math.abs(e.ref.dir[2]) > 0.99)
+      .map((e: any) => ({ i: e.i, screen: ui.viewport.screenOf(e.ref.mid) }));
+  });
+  expect(verticals).toHaveLength(4);
+  for (const v of verticals.slice(0, 2)) {
+    await page.mouse.move(v.screen.x, v.screen.y);
+    await page.mouse.click(v.screen.x, v.screen.y);
+  }
+  await expect(hud).toContainText("2 kenar seçili");
+  await page.screenshot({ path: `${S}/16-kenar-secimi.png` });
+  await hud.getByLabel("Değer").fill("3");
+  await hud.getByRole("button", { name: "Uygula" }).click();
+  await expect(hud).toBeHidden();
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude", "fillet"]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const app = (window as any).sugarcad;
+        return app.meshes.get(app.document.all()[2].id)?.volume ?? 0;
+      }),
+    )
+    .toBeCloseTo(8000 - 2 * (1 - Math.PI / 4) * 9 * 10, 1);
+  await page.screenshot({ path: `${S}/17-yuvarlatma.png` });
+
+  // Kabuk: üst yüzü seç
+  await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    app.document.setSelection([app.document.all()[2].id]);
+  });
+  await toolbar.getByRole("button", { name: "Kabuk", exact: true }).click();
+  const shell = page.getByRole("dialog", { name: "Kabuk" });
+  await expect(shell).toContainText("Açılacak", { timeout: 60_000 });
+  const top = await page.evaluate(() => {
+    const ui = (window as any).sugarcadUi;
+    const faces = ui.brep.described.faces;
+    const i = faces.findIndex((f: any) => f.ref.normal && f.ref.normal[2] > 0.99);
+    // Üst yüzün ağırlık merkezinden biraz içeride bir nokta (yuvarlatılmış köşelere takılmasın)
+    const c = faces[i].ref.center;
+    return ui.viewport.screenOf([c[0], c[1], c[2]]);
+  });
+  await page.mouse.move(top.x, top.y);
+  await page.mouse.click(top.x, top.y);
+  await expect(shell).toContainText("1 yüz seçili");
+  await shell.getByLabel("Değer").fill("1.5");
+  await shell.getByRole("button", { name: "Uygula" }).click();
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude", "fillet", "shell"]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const app = (window as any).sugarcad;
+        return app.meshes.get(app.document.all()[3].id)?.volume ?? 0;
+      }),
+    )
+    .toBeGreaterThan(0);
+  const v = await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    return [app.errors.get(app.document.all()[3].id) ?? "", app.meshes.get(app.document.all()[3].id).volume];
+  });
+  expect(v[0]).toBe("");
+  expect(v[1]).toBeLessThan(7000);
+  await page.screenshot({ path: `${S}/18-kabuk.png` });
+
+  // Geri al kabuğu, tekrar geri al yuvarlatmayı kaldırır
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await features(page)).length).toBe(3);
+  expect(errors).toEqual([]);
+});

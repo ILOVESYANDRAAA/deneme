@@ -1,9 +1,10 @@
 import type { InputField } from "../../packages/api/sugarcad";
 import type { MessageKind, SugarApp, UiBridge } from "../app/controller";
-import { BOOLEAN_LABELS, type BodyFeatureType } from "../core/features";
+import { BOOLEAN_LABELS, BREP_LABELS, BREP_FEATURES, type BodyFeatureType, type BrepFeatureType } from "../core/features";
 import { PLANES, type PlaneName } from "../core/sketch";
 import { CONSTRAINT_LABELS, type GeometricConstraintType } from "../core/sketchmodel";
 import type { BooleanOp } from "../core/solid";
+import { BrepTool } from "./brep";
 import { Notifications, showInputDialog } from "./dialogs";
 import { compact, h, icon, isTextInput } from "./dom";
 import { ExtensionsPanel } from "./extensions";
@@ -109,6 +110,7 @@ export class Workbench {
   readonly panels: PanelHost;
   readonly measure: MeasureTool;
   readonly section: SectionTool;
+  readonly brep: BrepTool;
   private palette: CommandPalette;
   private hud: SketchHud;
   readonly notes: SketchNotes;
@@ -133,6 +135,7 @@ export class Workbench {
     this.notes = new SketchNotes(this.sketcher, this.viewport, app);
     this.measure = new MeasureTool(this.viewport, () => this.renderAll());
     this.section = new SectionTool(this.viewport, () => this.renderAll());
+    this.brep = new BrepTool(app, this.viewport, () => this.renderAll());
 
     this.panels = new PanelHost();
     this.panels.add({
@@ -185,6 +188,7 @@ export class Workbench {
     this.registerViewCommands();
     this.registerSketchCommands();
     this.registerInspectCommands();
+    this.registerBrepCommands();
     this.renderAll();
 
     app.commands.onDidChange.on(() => this.renderRibbon());
@@ -199,7 +203,10 @@ export class Workbench {
     this.sketcher.onDidChange.on(() => {
       // İmleç hareketlerinde şerit yeniden kurulmasın; sadece mod ya da araç değişince.
       if (this.sketcher.activeId !== lastSketch || this.sketcher.tool !== lastTool) {
-        if (this.sketcher.activeId && !lastSketch) this.measure.close();
+        if (this.sketcher.activeId && !lastSketch) {
+          this.measure.close();
+          this.brep.close();
+        }
         lastSketch = this.sketcher.activeId;
         lastTool = this.sketcher.tool;
         this.panels.setContext("sketchPalette", this.sketcher.isActive);
@@ -381,10 +388,21 @@ export class Workbench {
     c.register({ id: "sketch.deleteSelection", title: "Seçili Öğeleri Sil", category: "Eskiz" }, () => sk.deleteSelected());
   }
 
+  private registerBrepCommands(): void {
+    for (const type of BREP_FEATURES) {
+      this.app.commands.register({ id: `feature.${type}`, title: BREP_LABELS[type], category: "Katı" }, async () => {
+        if (this.sketcher.isActive) throw new Error(`${BREP_LABELS[type]} için önce eskizi bitirin`);
+        this.measure.close();
+        await this.brep.open(type);
+      });
+    }
+  }
+
   private registerInspectCommands(): void {
     const c = this.app.commands;
     c.register({ id: "inspect.measure", title: "Ölç", category: "İncele", keybinding: "I" }, () => {
       if (this.sketcher.isActive) throw new Error("Ölçmek için önce eskizi bitirin");
+      this.brep.close();
       this.measure.open();
       this.renderRibbon();
     });
@@ -531,10 +549,14 @@ export class Workbench {
           ...ops.map((op) =>
             this.button(`boolean.${op}`, ICONS[op], { disabled: sel.length !== 2, title: `${BOOLEAN_LABELS[op]} — Ctrl ile iki gövde seçin` }),
           ),
+          this.button("feature.fillet", ICONS.fillet, { disabled: !oneBody, pressed: this.brep.mode === "edges" && this.brep.isActive, title: "Yuvarlatma — seçili gövdenin kenarlarını yuvarlatır" }),
+          this.button("feature.chamfer", ICONS.chamfer, { disabled: !oneBody, title: "Pah — seçili gövdenin kenarlarını pahlar" }),
+          this.button("feature.shell", ICONS.shell, { disabled: !oneBody, title: "Kabuk — seçilen yüzü açıp gövdenin içini oyar" }),
           this.button("feature.scale", ICONS.scale, { disabled: !oneBody, title: "Ölçek — seçili gövdeyi büyütür / küçültür" }),
         ],
         menu: [
           { label: "Birleştir", icon: ICONS.union, submenu: ops.map((op) => this.item(`boolean.${op}`, ICONS[op], { disabled: sel.length !== 2 })) },
+          ...(BREP_FEATURES as readonly BrepFeatureType[]).map((t) => this.item(`feature.${t}`, t === "fillet" ? ICONS.fillet : t === "chamfer" ? ICONS.chamfer : ICONS.shell, { disabled: !oneBody })),
           bodyItem("scale"),
           { separator: true, label: "" },
           this.item("edit.toggleVisibility", ICONS.eye, { disabled: !sel.length }),
@@ -758,6 +780,7 @@ export class Workbench {
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     if (!typing && e.key === "Escape") {
       if (this.viewport.isPickingPlane) return this.viewport.cancelPlanePick();
+      if (this.brep.isActive) return this.brep.close();
       if (this.measure.isActive) return this.measure.close();
       if (this.section.isActive && !this.sketcher.isActive) {
         this.section.close();

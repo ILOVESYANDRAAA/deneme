@@ -3,6 +3,7 @@ import {
   AXIS_LABELS,
   BOOLEAN_LABELS,
   DIRECTION_LABELS,
+  BREP_LABELS,
   FEATURE_LABELS,
   OPERATION_LABELS,
   WORLD_AXIS_LABELS,
@@ -123,7 +124,7 @@ export class PropertiesPanel {
     this.inputs.set("name", nameInput);
     form.append(this.field("Ad", nameInput));
 
-    const sketchLabel = FEATURE_LABELS[f.type as keyof typeof FEATURE_LABELS];
+    const sketchLabel = FEATURE_LABELS[f.type as keyof typeof FEATURE_LABELS] ?? BREP_LABELS[f.type as keyof typeof BREP_LABELS];
     const typeLabel =
       f.type === "boolean"
         ? `Boolean · ${BOOLEAN_LABELS[f.op!]}`
@@ -164,6 +165,8 @@ export class PropertiesPanel {
       if (f.source) {
         form.append(h("div", { class: "meta" }, `Kaynak gövde: ${app.document.get(f.source)?.name ?? "—"}`));
       }
+      if (f.edges?.length) form.append(h("div", { class: "meta" }, `${f.edges.length} kenar seçili`));
+      if (f.faces?.length) form.append(h("div", { class: "meta" }, `${f.faces.length} yüz açık`));
       if (f.type === "mirror") {
         const planes = Object.fromEntries((Object.keys(PLANES) as PlaneName[]).map((p) => [p, PLANES[p].label]));
         form.append(this.selectField("plane", "Ayna düzlemi", planes, f.plane ?? "YZ", (v) => this.apply(f.id, { plane: v as PlaneName })));

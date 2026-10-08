@@ -53,6 +53,10 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
 - **Döndürme:** profili eskizin dikey (V) ya da yatay (U) ekseni etrafında döndürür; aynı işlem seçenekleri
 - **Desen:** dikdörtgensel (X / Y / Z adet ve aralık) ve dairesel (eksen, adet, toplam açı)
 - **Ayna** (XY / XZ / YZ düzlemine göre) ve **Ölçek**
+- **Yuvarlatma, Pah, Kabuk** (OpenCascade çekirdeği): gövdenin kenarlarına (ya da açılacak yüzlerine) 3D görünümde
+  tıklayarak seçilir, değer girilip uygulanır. Sonuç parametriktir: yarıçap / mesafe / et kalınlığı sonradan
+  Özellikler panelinden değişir; gövde ölçüsü değişse de seçilen kenarlar en yakın eşleşmeyle bulunur.
+  Çekirdek (~23 MB wasm) uygulama açılırken değil, ilk kullanımda yüklenir; diğer işlemler hızlı manifold çekirdeğinde kalır
 - **Boolean işlemleri:** Birleşim, Çıkarma, Kesişim (sonuç düzenlenebilir kalır)
 - **İncele:** **Ölç** (iki nokta arası mesafe ve ΔX/ΔY/ΔZ, köşelere yapışır), **Kesit Analizi**
 - Gövde / eskiz gizleme (göz simgesi ya da `V`), parametrik özellik ağacı, geri al / yinele
@@ -129,7 +133,7 @@ kurar ve yeniden başlar. Bunun için:
 ```
 src/
   core/        Özellik ağacı, eskiz modeli, komutlar, katı tarifleri (DOM'dan bağımsız)
-  geometry/    manifold-3d geometri işçisi, önbellek, STL
+  geometry/    manifold-3d geometri işçisi, önbellek, STL; occ/: OpenCascade (replicad) işçisi
   plugins/     Eklenti sunucusu, manifest doğrulama, RPC, eklenti çalışma ortamı
   app/         Uygulama denetleyicisi (her şeyi birleştiren katman)
   ui/          Arayüz: 3D görünüm, ViewCube, araç şeridi, taşınabilir paneller, eskiz aracı,
@@ -167,7 +171,13 @@ exports.activate = (sugarcad) => {
 ## Yol haritası
 
 - Katı yüzeyine eskiz çizme
-- 3D kenar yuvarlatma / pah, kabuk, süpürme (sweep) ve loft
+- Delik, açılı yüzey (draft), süpürme (sweep), loft ve kaburga (OpenCascade ile)
 - Ekstrüzyonda "bir sonrakine kadar" seçeneği
 - Eklenti mağazası (indir / güncelle)
 - STEP / 3MF içe ve dışa aktarma
+
+## Üçüncü taraf bileşenler
+
+- [manifold](https://github.com/elalish/manifold) (Apache-2.0): hızlı katı boolean çekirdeği
+- [OpenCascade](https://dev.opencascade.org) (LGPL-2.1, özel istisnasıyla) + [replicad](https://replicad.xyz) (MIT): yuvarlatma / pah / kabuk
+- [planegcs](https://github.com/Salusoft89/planegcs) (LGPL-2.1+, FreeCAD): eskiz kısıt çözücü
