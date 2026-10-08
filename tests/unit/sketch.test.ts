@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Feature } from "../../src/core/features";
 import type { PlaneName, SketchEntity } from "../../src/core/sketch";
+import { fromLegacyEntities } from "../../src/core/sketchmodel";
 import { niceStep, sketchProfiles, sketchSegments, snapToGrid, toWorld } from "../../src/core/sketch";
 import { createApp } from "./helpers";
 
@@ -16,7 +17,7 @@ async function build(
 ) {
   const { app, ui } = await createApp();
   const sketch = app.createSketch(plane);
-  app.document.update(sketch.id, { entities, params: { offset } });
+  app.document.update(sketch.id, { sketchData: fromLegacyEntities(entities), params: { offset } });
   const f = app.addSketchFeature(feature.type)!;
   if (feature.type === "extrude" && feature.distance !== undefined) await app.updateFeature(f.id, { params: { distance: feature.distance } });
   if (feature.type === "revolve") {
@@ -156,7 +157,7 @@ describe("eskiz tabanlı özellik ağacı", () => {
   it("eskizi düzenlemek ekstrüzyonu günceller (parametrik)", async () => {
     const { app, sketch, f, volume } = await build("XY", [rect([0, 0], [10, 10])], { type: "extrude", distance: 1 });
     expect(volume).toBeCloseTo(100);
-    app.document.update(sketch.id, { entities: [rect([0, 0], [10, 20])] });
+    app.document.update(sketch.id, { sketchData: fromLegacyEntities([rect([0, 0], [10, 20])]) });
     expect(app.meshes.get(f.id)!.volume).toBeCloseTo(200);
     app.document.undo();
     expect(app.meshes.get(f.id)!.volume).toBeCloseTo(100);

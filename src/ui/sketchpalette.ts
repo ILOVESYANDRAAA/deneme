@@ -1,4 +1,5 @@
-import { describeSketch } from "../core/sketch";
+import { DIMENSION_UNITS } from "../core/constrain";
+import { CONSTRAINT_GLYPHS, CONSTRAINT_LABELS, CURVE_LABELS, describeSketchData, isDimension, type GeometricConstraintType } from "../core/sketchmodel";
 import { h, icon } from "./dom";
 import { ICONS } from "./icons";
 import type { SketchOptions, Sketcher } from "./sketcher";
@@ -10,6 +11,7 @@ const CHECKS: [BoolOption, string, string?][] = [
   ["snapGrid", "Izgaraya yapış"],
   ["snapPoints", "Köşe / merkeze yapış"],
   ["showProfiles", "Profilleri göster"],
+  ["showConstraints", "Kısıt simgelerini göster"],
   ["construction", "Yapı çizgisi modu", "X"],
 ];
 
@@ -21,6 +23,9 @@ export class SketchPalette {
   private radius: HTMLInputElement;
   private selection = h("div", { class: "palette-selection" });
   private summary = h("div", { class: "meta" });
+  private dimensions = h("div", { class: "palette-list", attrs: { "aria-label": "Ölçüler" } });
+  private constraints = h("div", { class: "palette-list", attrs: { "aria-label": "Kısıtlar" } });
+  private listKey = "";
 
   constructor(private readonly sketcher: Sketcher) {
     const options = h("div", { class: "palette-options" });
@@ -43,6 +48,10 @@ export class SketchPalette {
       h("h3", {}, "Seçim"),
       this.selection,
       this.summary,
+      h("h3", {}, "Ölçüler"),
+      this.dimensions,
+      h("h3", {}, "Kısıtlar"),
+      this.constraints,
       h(
         "div",
         { class: "btn-row" },
@@ -96,6 +105,69 @@ export class SketchPalette {
           : h("div", { class: "meta" }, "Araç yokken (Esc) öğelere tıklayarak seçin; Ctrl ile çoklu seçim."),
       );
     }
-    this.summary.textContent = describeSketch(sk.sketch()?.entities ?? []);
+    this.summary.textContent = describeSketchData(sk.data());
+    this.renderLists();
+  }
+
+  /** Kısıt ve ölçü listeleri; odakta bir değer girişi varken yeniden kurulmaz. */
+  private renderLists(): void {
+    const sk = this.sketcher;
+    const d = sk.data();
+    const key = [
+      d.constraints.map((k) => `${k.id}:${k.value ?? ""}`).join("|"),
+      [...sk.selected].join(","),
+      sk.solveInfo.conflicting.join(","),
+    ].join("#");
+    if (key === this.listKey || this.dimensions.contains(document.activeElement)) return;
+    this.listKey = key;
+    const nameOf = (id: string) => {
+      const c = d.curves.find((x) => x.id === id);
+      return c ? `${CURVE_LABELS[c.kind]} ${id.slice(1)}` : `Nokta ${id.slice(1)}`;
+    };
+    const conflicting = new Set(sk.solveInfo.conflicting);
+    const remove = (id: string) =>
+      h("button", { class: "btn small danger", title: "Sil", attrs: { "aria-label": "Sil" }, onclick: () => {
+        sk.selected.clear();
+        sk.selected.add(id);
+        sk.deleteSelected();
+      } }, "✕");
+    const dims = d.constraints.filter(isDimension);
+    this.dimensions.replaceChildren(
+      ...(dims.length
+        ? dims.map((k) => {
+            const input = h("input", { type: "number", value: String(k.value ?? 0), attrs: { "aria-label": `${CONSTRAINT_LABELS[k.type]} ${nameOf(k.refs[0])}` } });
+            input.step = "any";
+            input.addEventListener("change", () => {
+              if (!sk.setDimensionValue(k.id, Number(input.value))) input.value = String(k.value ?? 0);
+            });
+            return h(
+              "div",
+              { class: `palette-row${sk.selected.has(k.id) ? " selected" : ""}${conflicting.has(k.id) ? " conflict" : ""}`, dataset: { constraint: k.id } },
+              h("span", { class: "grow", title: k.refs.map(nameOf).join(" – ") }, `${CONSTRAINT_LABELS[k.type]} · ${nameOf(k.refs[0])}`),
+              input,
+              h("span", { class: "unit" }, DIMENSION_UNITS[k.type as keyof typeof DIMENSION_UNITS]),
+              remove(k.id),
+            );
+          })
+        : [h("div", { class: "meta" }, "Ölçü yok. Ölçü aracı (D) ile ekleyin.")]),
+    );
+    const geo = d.constraints.filter((k) => !isDimension(k));
+    this.constraints.replaceChildren(
+      ...(geo.length
+        ? geo.map((k) =>
+            h(
+              "div",
+              {
+                class: `palette-row${sk.selected.has(k.id) ? " selected" : ""}${conflicting.has(k.id) ? " conflict" : ""}`,
+                dataset: { constraint: k.id },
+                onclick: (e: MouseEvent) => sk.selectItem(k.id, e.ctrlKey || e.metaKey || e.shiftKey),
+              },
+              h("span", { class: "glyph" }, CONSTRAINT_GLYPHS[k.type as GeometricConstraintType] ?? "?"),
+              h("span", { class: "grow", title: k.refs.map(nameOf).join(" – ") }, `${CONSTRAINT_LABELS[k.type]} · ${k.refs.map(nameOf).join(", ")}`),
+              remove(k.id),
+            ),
+          )
+        : [h("div", { class: "meta" }, "Kısıt yok.")]),
+    );
   }
 }

@@ -6,6 +6,7 @@ import {
   FEATURE_LABELS,
   OPERATION_LABELS,
   WORLD_AXIS_LABELS,
+  sketchDataOf,
   type BodyOperation,
   type ExtrudeDirection,
   type Feature,
@@ -13,7 +14,8 @@ import {
   type RevolveAxis,
   type WorldAxis,
 } from "../core/features";
-import { PLANES, describeSketch, type PlaneName } from "../core/sketch";
+import { PLANES, type PlaneName } from "../core/sketch";
+import { describeSketchData } from "../core/sketchmodel";
 import type { BooleanOp, Vec3 } from "../core/solid";
 import { formatNumber, h } from "./dom";
 import type { Sketcher } from "./sketcher";
@@ -225,7 +227,7 @@ export class PropertiesPanel {
     select.addEventListener("change", () => this.apply(f.id, { plane: select.value as PlaneName }));
     this.inputs.set("plane", select);
     form.append(this.field("Düzlem", select));
-    form.append(h("div", { class: "meta", dataset: { sketchdesc: "" } }, describeSketch(f.entities ?? [])));
+    form.append(h("div", { class: "meta", dataset: { sketchdesc: "" } }, describeSketchData(sketchDataOf(f))));
   }
 
   /** Yeni gövde / Birleştir / Kes / Kesiştir ve hedef gövde. */
@@ -295,7 +297,7 @@ export class PropertiesPanel {
     if (f.type === "mirror") set("plane", f.plane ?? "YZ");
     if (f.type === "circularPattern") set("worldAxis", f.worldAxis ?? "Z");
     const desc = this.body.querySelector<HTMLElement>("[data-sketchdesc]");
-    if (desc) desc.textContent = describeSketch(f.entities ?? []);
+    if (desc) desc.textContent = describeSketchData(sketchDataOf(f));
     for (const [name, value] of Object.entries(f.params)) set(`param.${name}`, formatNumber(value));
     f.position.forEach((v, i) => set(`position.${i}`, formatNumber(v)));
     f.rotation.forEach((v, i) => set(`rotation.${i}`, formatNumber(v)));

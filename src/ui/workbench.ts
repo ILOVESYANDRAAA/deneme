@@ -2,6 +2,7 @@ import type { InputField } from "../../packages/api/sugarcad";
 import type { MessageKind, SugarApp, UiBridge } from "../app/controller";
 import { BOOLEAN_LABELS, type BodyFeatureType } from "../core/features";
 import { PLANES, type PlaneName } from "../core/sketch";
+import { CONSTRAINT_LABELS, type GeometricConstraintType } from "../core/sketchmodel";
 import type { BooleanOp } from "../core/solid";
 import { Notifications, showInputDialog } from "./dialogs";
 import { compact, h, icon, isTextInput } from "./dom";
@@ -14,6 +15,7 @@ import { PanelHost } from "./panels";
 import { PropertiesPanel } from "./properties";
 import { Ribbon, type RibbonButton, type RibbonGroup } from "./ribbon";
 import { SketchHud } from "./sketchhud";
+import { SketchNotes } from "./sketchnotes";
 import { SketchPalette } from "./sketchpalette";
 import { Sketcher, TOOLS, type SketchTool } from "./sketcher";
 import { Timeline } from "./timeline";
@@ -64,8 +66,27 @@ const SKETCH_TOOL_ICONS: Record<SketchTool, string> = {
   slot: ICONS.slot,
   ellipse: ICONS.ellipse,
   spline: ICONS.spline,
+  point: ICONS.point,
   fillet: ICONS.fillet,
+  dimension: ICONS.dimension,
 };
+
+const CONSTRAINT_ICONS: Record<GeometricConstraintType, string> = {
+  coincident: ICONS.cCoincident,
+  horizontal: ICONS.cHorizontal,
+  vertical: ICONS.cVertical,
+  parallel: ICONS.cParallel,
+  perpendicular: ICONS.cPerpendicular,
+  tangent: ICONS.cTangent,
+  equal: ICONS.cEqual,
+  fix: ICONS.cFix,
+  midpoint: ICONS.cMidpoint,
+  concentric: ICONS.cConcentric,
+  onCurve: ICONS.cOnCurve,
+  symmetric: ICONS.cSymmetric,
+};
+
+const CONSTRAINT_TYPES = Object.keys(CONSTRAINT_ICONS) as GeometricConstraintType[];
 
 const BODY_FEATURE_ICONS: Record<BodyFeatureType, string> = {
   mirror: ICONS.mirror,
@@ -87,6 +108,7 @@ export class Workbench {
   readonly section: SectionTool;
   private palette: CommandPalette;
   private hud: SketchHud;
+  readonly notes: SketchNotes;
   private ribbon = new Ribbon();
   private appbar = h("header", { class: "appbar" });
   private navbar = h("nav", { class: "navbar", attrs: { "aria-label": "Gezinme" } });
@@ -105,6 +127,7 @@ export class Workbench {
     this.viewport = new Viewport(app);
     this.sketcher = new Sketcher(app, this.viewport);
     this.hud = new SketchHud(this.sketcher, this.viewport);
+    this.notes = new SketchNotes(this.sketcher, this.viewport, app);
     this.measure = new MeasureTool(this.viewport, () => this.renderAll());
     this.section = new SectionTool(this.viewport, () => this.renderAll());
 
@@ -297,6 +320,11 @@ export class Workbench {
       );
     }
     c.register({ id: "sketch.select", title: "Seç", category: "Eskiz" }, () => sk.setTool(null));
+    for (const type of CONSTRAINT_TYPES) {
+      c.register({ id: `sketch.constraint.${type}`, title: `Kısıt: ${CONSTRAINT_LABELS[type]}`, category: "Eskiz" }, () =>
+        sk.applyConstraint(type),
+      );
+    }
     c.register({ id: "sketch.construction", title: "Yapı Çizgisi", category: "Eskiz", keybinding: "X" }, () =>
       sk.toggleConstruction(),
     );
@@ -494,6 +522,8 @@ export class Workbench {
     const toolItem = (t: SketchTool, label?: string) =>
       this.item(`sketch.tool.${t}`, SKETCH_TOOL_ICONS[t], { checked: undefined, ...(label ? { label } : {}) });
     const hasSel = sk.selected.size > 0;
+    const constraint = (t: GeometricConstraintType) =>
+      this.button(`sketch.constraint.${t}`, CONSTRAINT_ICONS[t], { title: `${CONSTRAINT_LABELS[t]} — önce öğeleri seçin, sonra tıklayın` });
     return [
       {
         id: "sketch-create",
@@ -516,6 +546,7 @@ export class Workbench {
           toolItem("slot"),
           toolItem("ellipse"),
           toolItem("spline"),
+          toolItem("point"),
           { separator: true, label: "" },
           this.item("sketch.mirrorV", ICONS.sketchMirror, { disabled: !hasSel }),
           this.item("sketch.mirrorU", ICONS.sketchMirror, { disabled: !hasSel }),
@@ -542,6 +573,21 @@ export class Workbench {
           this.item("sketch.mirrorU", ICONS.sketchMirror, { disabled: !hasSel }),
           { separator: true, label: "" },
           this.item("sketch.deleteSelection", ICONS.trash, { disabled: !hasSel, keybinding: "Delete" }),
+        ],
+      },
+      {
+        id: "sketch-constraints",
+        label: "KISITLAR",
+        buttons: [
+          tool("dimension"),
+          ...(["coincident", "horizontal", "vertical", "parallel", "perpendicular", "tangent", "equal", "fix"] as GeometricConstraintType[]).map(constraint),
+        ],
+        menu: [
+          toolItem("dimension"),
+          { separator: true, label: "" },
+          ...CONSTRAINT_TYPES.map((t) =>
+            this.item(`sketch.constraint.${t}`, CONSTRAINT_ICONS[t], { label: CONSTRAINT_LABELS[t] }),
+          ),
         ],
       },
       {
@@ -590,6 +636,18 @@ export class Workbench {
 
   // ---- durum çubuğu ----
 
+  /** Eskizin kısıt durumu: tam tanımlı, kalan serbestlik derecesi ya da çelişki. */
+  private dofChip(): HTMLElement | null {
+    const sk = this.sketcher;
+    const info = sk.solveInfo;
+    if (!info.solved || !sk.data().curves.some((c) => c.kind !== "point")) return null;
+    if (info.conflicting.length) {
+      return h("span", { class: "dof conflict", title: "Birbiriyle çelişen kısıtlar kırmızı gösterilir; birini silin" }, "Çelişen kısıt");
+    }
+    if (info.dof === 0) return h("span", { class: "dof full", title: "Her şey ölçü ve kısıtlarla belirli" }, "Tam tanımlı");
+    return h("span", { class: "dof", title: "Henüz ölçü / kısıt verilmemiş hareket serbestliği" }, `${info.dof} serbestlik`);
+  }
+
   private renderStatus(): void {
     const doc = this.app.document;
     const roots = doc.roots();
@@ -602,6 +660,7 @@ export class Workbench {
         ...compact(
           h("span", { class: "sketch-status" }, sk.statusText()),
           h("span", { class: "grow" }),
+          this.dofChip(),
           c ? h("span", { class: "coords" }, `u ${c[0].toFixed(2)}  v ${c[1].toFixed(2)}${sk.snapKind ? ` · ${sk.snapKind}` : ""}`) : null,
           h("span", {}, `Izgara: ${sk.gridStep} mm`),
           h("span", {}, h("kbd", {}, "Esc"), " iptal"),

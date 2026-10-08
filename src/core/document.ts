@@ -1,8 +1,10 @@
 import { Emitter } from "./events";
-import { featureRefs, isSolidFeature, type Feature } from "./features";
+import { featureRefs, isSolidFeature, sketchDataOf, type Feature } from "./features";
 import type { BooleanOp } from "./solid";
 
-export const FILE_VERSION = 1;
+export const FILE_VERSION = 2;
+/** Açılabilen en eski dosya sürümü (v1: eskizler bütün-şekil öğeleriyle). */
+const MIN_FILE_VERSION = 1;
 const MAX_HISTORY = 200;
 
 export interface SugarFile {
@@ -219,9 +221,11 @@ export class SugarDocument {
 
   load(file: SugarFile): void {
     if (file?.app !== "sugarCAD") throw new Error("Bu bir sugarCAD dosyası değil");
-    if (file.version !== FILE_VERSION) throw new Error(`Desteklenmeyen dosya sürümü: ${file.version}`);
+    if (!(file.version >= MIN_FILE_VERSION && file.version <= FILE_VERSION)) {
+      throw new Error(`Desteklenmeyen dosya sürümü: ${file.version}`);
+    }
     if (!Array.isArray(file.features)) throw new Error("Dosyada özellik listesi yok");
-    this.features = clone(file.features);
+    this.features = clone(file.features).map(migrateFeature);
     this.undoStack = [];
     this.redoStack = [];
     this.selection = [];
@@ -243,4 +247,11 @@ export class SugarDocument {
   clear(): void {
     this.load({ app: "sugarCAD", version: FILE_VERSION, features: [] });
   }
+}
+
+/** Eski eskiz öğelerini yeni nokta / eğri / kısıt modeline çevirir. */
+function migrateFeature(f: Feature): Feature {
+  if (f.type !== "sketch" || f.sketchData) return f;
+  const { entities: _legacy, ...rest } = f;
+  return { ...rest, sketchData: sketchDataOf(f) };
 }

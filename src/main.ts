@@ -1,4 +1,6 @@
 import { SugarApp } from "./app/controller";
+import * as sketchModel from "./core/sketchmodel";
+import { webSolver } from "./core/solver-web";
 import { GeometryClient } from "./geometry/client";
 import { detectPlatform } from "./platform/adapter";
 import { builtinPlugins } from "./plugins/builtin";
@@ -16,6 +18,14 @@ async function start(): Promise<void> {
   const app = new SugarApp(platform, ui, geometry, createPluginWorker);
   const workbench = new Workbench(document.getElementById("app")!, app, ui);
 
+  // Kısıt çözücü (WASM) arka planda yüklenir; yüklenene kadar çizim yine çalışır, kısıtlar sonra çözülür.
+  webSolver().then(
+    (s) => {
+      app.solver = s;
+      document.body.dataset.solver = "true";
+    },
+    (e) => ui.showMessage(`Kısıt çözücü başlatılamadı: ${e}`, "error"),
+  );
   geometry.whenReady().catch((e) => ui.showMessage(`Geometri motoru başlatılamadı: ${e}`, "error"));
   await app.loadPlugins(builtinPlugins());
   // Masaüstünde açılıştan biraz sonra sessizce yeni sürüm denetlenir.
@@ -23,7 +33,7 @@ async function start(): Promise<void> {
 
   if (import.meta.env.DEV) {
     // Geliştirme ve uçtan uca testler için.
-    Object.assign(window, { sugarcad: app, sugarcadUi: workbench });
+    Object.assign(window, { sugarcad: app, sugarcadUi: workbench, sugarcadModel: sketchModel });
   }
   document.body.dataset.ready = "true";
 }

@@ -1,3 +1,4 @@
+import { fromLegacyEntities } from "../../src/core/sketchmodel";
 import { describe, expect, it } from "vitest";
 import {
   arcGeometry,
@@ -133,7 +134,7 @@ describe("eskiz düzenleme araçları", () => {
 async function makePlate() {
   const { app, ui } = await createApp();
   const sketch = app.createSketch("XY");
-  app.document.update(sketch.id, { entities: [{ kind: "rect", a: [0, 0], b: [20, 10] }] });
+  app.document.update(sketch.id, { sketchData: fromLegacyEntities([{ kind: "rect", a: [0, 0], b: [20, 10] }]) });
   const plate = app.addSketchFeature("extrude", sketch.id)!;
   await app.updateFeature(plate.id, { params: { distance: 5 } });
   return { app, ui, plate };
@@ -153,7 +154,7 @@ describe("ekstrüzyon seçenekleri", () => {
   it("Kes işlemi tek gövdeyi hedef seçer ve delik açar", async () => {
     const { app, plate } = await makePlate();
     const s2 = app.createSketch("XY");
-    app.document.update(s2.id, { entities: [{ kind: "circle", c: [10, 5], r: 2 }] });
+    app.document.update(s2.id, { sketchData: fromLegacyEntities([{ kind: "circle", c: [10, 5], r: 2 }]) });
     const cut = app.addSketchFeature("extrude", s2.id)!;
     expect(app.targetCandidates(cut.id).map((f) => f.id)).toEqual([plate.id]);
     await app.setOperation(cut.id, "cut");
@@ -170,7 +171,7 @@ describe("ekstrüzyon seçenekleri", () => {
   it("hedef seçilmeden Kes anlaşılır hata verir", async () => {
     const { app } = await createApp();
     const s = app.createSketch("XY");
-    app.document.update(s.id, { entities: [{ kind: "rect", a: [0, 0], b: [1, 1] }] });
+    app.document.update(s.id, { sketchData: fromLegacyEntities([{ kind: "rect", a: [0, 0], b: [1, 1] }]) });
     const e = app.addSketchFeature("extrude", s.id)!;
     await app.setOperation(e.id, "cut");
     expect(app.errors.get(e.id)).toMatch(/hedef gövde/);

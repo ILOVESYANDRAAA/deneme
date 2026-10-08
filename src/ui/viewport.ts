@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { SugarApp } from "../app/controller";
 import { Emitter } from "../core/events";
-import { PLANES, profileRegions, sketchProfiles, sketchSegments, toWorld, type PlaneName, type SketchEntity } from "../core/sketch";
+import { sketchDataOf } from "../core/features";
+import { PLANES, profileRegions, toWorld, type PlaneName } from "../core/sketch";
+import { curvePoints, curveSegments, pointMap, sketchDataProfiles, type SketchData } from "../core/sketchmodel";
 import type { Vec2, Vec3 } from "../core/solid";
 import type { MeshData } from "../geometry/evaluate";
 import { h } from "./dom";
@@ -21,6 +23,8 @@ const THEMES = {
     entitySelected: "#00a2ff",
     entityHover: "#e0811a",
     construction: "#d07a1c",
+    sketchPoint: "#1d4f91",
+    fixedPoint: "#d9433b",
     profile: "#f0a24a",
     preview: "#0696d7",
     overlay: "#0aa564",
@@ -40,6 +44,8 @@ const THEMES = {
     entitySelected: "#4fa8ff",
     entityHover: "#ffe1a8",
     construction: "#c98a3a",
+    sketchPoint: "#c9d3e6",
+    fixedPoint: "#ff7a70",
     profile: "#f2a541",
     preview: "#ffe1a8",
     overlay: "#4fe0a0",
@@ -102,6 +108,9 @@ export interface SectionSettings {
 
 /** Eskiz modu ve ölçüm gibi araçların görünümdeki fare olaylarını devralması için. */
 export interface PointerHandler {
+  /** Sol tuş basıldığında (sürükleyerek düzenleme için); isteğe bağlı. */
+  pointerDown?(e: PointerEvent): void;
+  pointerUp?(e: PointerEvent): void;
   pointerMove(e: PointerEvent): void;
   click(e: PointerEvent): void;
   doubleClick(e: MouseEvent): void;
@@ -133,7 +142,10 @@ export class Viewport {
   private overlay = new THREE.Group();
   private activeSketch: string | null = null;
   private sketchOptions = { grid: true, profiles: true };
-  private highlight: { selected: Set<number>; hovered: number } = { selected: new Set(), hovered: -1 };
+  /** Seçili öğeler (eğri ve nokta kimlikleri) ve imlecin üstündeki öğe. */
+  private highlight: { selected: Set<string>; hovered: string | null } = { selected: new Set(), hovered: null };
+  /** Sürükleme sırasında belgeye yazılmadan gösterilen eskiz verisi. */
+  private liveData: SketchData | null = null;
   private interaction: PointerHandler | null = null;
   private planePicker: {
     group: THREE.Group;
@@ -260,6 +272,7 @@ export class Viewport {
     let down: { x: number; y: number } | null = null;
     canvas.addEventListener("pointerdown", (e) => {
       down = { x: e.clientX, y: e.clientY };
+      if (!this.planePicker) this.interaction?.pointerDown?.(e);
     });
     canvas.addEventListener("pointermove", (e) => {
       if (this.planePicker) this.hoverPlane(e.clientX, e.clientY);
@@ -267,6 +280,7 @@ export class Viewport {
     });
     canvas.addEventListener("pointerleave", () => this.interaction?.pointerLeave());
     canvas.addEventListener("pointerup", (e) => {
+      if (!this.planePicker) this.interaction?.pointerUp?.(e);
       if (!down || e.button !== 0) return;
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
@@ -515,7 +529,8 @@ export class Viewport {
     this.controls.enableRotate = true;
     this.sketchGrid.visible = false;
     this.ground.visible = this.gridVisible;
-    this.highlight = { selected: new Set(), hovered: -1 };
+    this.highlight = { selected: new Set(), hovered: null };
+    this.liveData = null;
     this.setPreview([], "XY", 0);
     this.refreshSketches();
   }
@@ -527,14 +542,20 @@ export class Viewport {
     if (changed) this.refreshSketches();
   }
 
-  /** Etkin eskizde seçili ve imlecin üstündeki öğeler. */
-  setSketchHighlight(selected: number[], hovered: number): void {
+  /** Etkin eskizde seçili ve imlecin üstündeki öğeler (eğri / nokta kimlikleri). */
+  setSketchHighlight(selected: string[], hovered: string | null): void {
     const same =
       hovered === this.highlight.hovered &&
       selected.length === this.highlight.selected.size &&
       selected.every((i) => this.highlight.selected.has(i));
     if (same) return;
     this.highlight = { selected: new Set(selected), hovered };
+    this.refreshSketches();
+  }
+
+  /** Sürüklerken etkin eskizi belgeye yazmadan bu veriyle çizer (null: belgedekini göster). */
+  setLiveSketch(data: SketchData | null): void {
+    this.liveData = data;
     this.refreshSketches();
   }
 
@@ -578,27 +599,28 @@ export class Viewport {
       const active = f.id === this.activeSketch;
       const free = !doc.parentOf(f.id);
       if (!active && !selected.has(f.id) && (!free || f.hidden)) continue;
-      const entities = f.entities ?? [];
+      const data = active && this.liveData ? this.liveData : sketchDataOf(f);
       const offset = f.params.offset ?? 0;
       const color = active ? this.c.sketchActive : selected.has(f.id) ? this.c.sketchSelected : this.c.sketch;
-      const groups = new Map<string, { color: string; dashed: boolean; entities: SketchEntity[] }>();
-      entities.forEach((e, i) => {
-        let key = e.construction ? "construction" : "normal";
-        let c = e.construction ? this.c.construction : color;
-        if (active && this.highlight.selected.has(i)) {
+      const pm = pointMap(data);
+      const groups = new Map<string, { color: string; dashed: boolean; segs: [Vec2, Vec2][] }>();
+      for (const curve of data.curves) {
+        let key = curve.construction ? "construction" : "normal";
+        let c = curve.construction ? this.c.construction : color;
+        if (active && this.highlight.selected.has(curve.id)) {
           key = `sel-${key}`;
           c = this.c.entitySelected;
-        } else if (active && this.highlight.hovered === i) {
+        } else if (active && this.highlight.hovered === curve.id) {
           key = `hover-${key}`;
           c = this.c.entityHover;
         }
-        const g = groups.get(key) ?? { color: c, dashed: !!e.construction, entities: [] };
-        g.entities.push(e);
+        const g = groups.get(key) ?? { color: c, dashed: !!curve.construction, segs: [] };
+        g.segs.push(...curveSegments(data, curve, pm));
         groups.set(key, g);
-      });
+      }
       for (const g of groups.values()) {
         const pts: number[] = [];
-        for (const [a, b] of sketchSegments(g.entities)) pts.push(...toWorld(f.plane, offset, a), ...toWorld(f.plane, offset, b));
+        for (const [a, b] of g.segs) pts.push(...toWorld(f.plane, offset, a), ...toWorld(f.plane, offset, b));
         if (!pts.length) continue;
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
@@ -612,15 +634,41 @@ export class Viewport {
         line.userData.featureId = f.id;
         this.sketchGroup.add(line);
       }
+      if (active) this.addSketchPoints(f.plane, offset, data);
       // Kapalı bölgeler hafifçe boyanır: neyin katıya çevrilebileceği görünsün.
-      if ((active && this.sketchOptions.profiles) || (!active && free)) this.addProfileFill(f.plane, offset, entities, active);
+      if ((active && this.sketchOptions.profiles) || (!active && free)) this.addProfileFill(f.plane, offset, data, active);
     }
     this.updateHint();
     this.requestRender();
   }
 
-  private addProfileFill(plane: PlaneName, offset: number, entities: SketchEntity[], active: boolean): void {
-    const regions = profileRegions(sketchProfiles(entities));
+  /** Etkin eskizin uç ve merkez noktaları: seçili olanlar vurgulanır, sabitler ayrı renkte. */
+  private addSketchPoints(plane: PlaneName, offset: number, data: SketchData): void {
+    const used = new Set(data.curves.flatMap(curvePoints));
+    const fixed = new Set(data.constraints.filter((k) => k.type === "fix").map((k) => k.refs[0]));
+    const buckets = new Map<string, { color: string; size: number; pts: number[] }>();
+    for (const p of data.points) {
+      if (!used.has(p.id)) continue;
+      const sel = this.highlight.selected.has(p.id);
+      const hov = this.highlight.hovered === p.id;
+      const color = sel ? this.c.entitySelected : hov ? this.c.entityHover : fixed.has(p.id) ? this.c.fixedPoint : this.c.sketchPoint;
+      const size = sel || hov ? 9 : 6;
+      const key = `${color}-${size}`;
+      const b = buckets.get(key) ?? { color, size, pts: [] };
+      b.pts.push(...toWorld(plane, offset, [p.x, p.y]));
+      buckets.set(key, b);
+    }
+    for (const b of buckets.values()) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(b.pts, 3));
+      const dots = new THREE.Points(g, new THREE.PointsMaterial({ color: b.color, size: b.size, sizeAttenuation: false, depthTest: false }));
+      dots.renderOrder = 11;
+      this.sketchGroup.add(dots);
+    }
+  }
+
+  private addProfileFill(plane: PlaneName, offset: number, data: SketchData, active: boolean): void {
+    const regions = profileRegions(sketchDataProfiles(data));
     if (!regions.length) return;
     const shapes = regions.map(({ outer, holes }) => {
       const shape = new THREE.Shape(outer.map(([x, y]) => new THREE.Vector2(x, y)));

@@ -13,12 +13,15 @@ import {
   defaultParams,
   featureRefs,
   featureSolid,
+  sketchDataOf,
   isSolidFeature,
   type Feature,
   type ParamSpec,
   type ParamValues,
 } from "../core/features";
 import { PLANES, type PlaneName } from "../core/sketch";
+import type { SketchSolver } from "../core/solver";
+import { emptySketch } from "../core/sketchmodel";
 import type { BooleanOp, Solid, Vec3 } from "../core/solid";
 import type { MeshData } from "../geometry/evaluate";
 import { meshesToStl } from "../geometry/stl";
@@ -64,6 +67,8 @@ export class SugarApp implements HostServices {
   readonly onDidChangeTitle = new Emitter<string>();
 
   filePath: string | null = null;
+  /** Eskiz kısıt çözücüsü; başlatılana kadar (ya da hiç yoksa) kısıtlar çözülmez, çizim yine çalışır. */
+  solver: SketchSolver | null = null;
 
   constructor(
     readonly platform: Platform,
@@ -164,7 +169,7 @@ export class SugarApp implements HostServices {
   createSketch(plane: PlaneName, offset = 0): Feature {
     if (!(plane in PLANES)) throw new Error(`Bilinmeyen düzlem: ${plane}`);
     const feature = this.document.add(
-      { type: "sketch", plane, entities: [], params: { offset: Number.isFinite(offset) ? offset : 0 } },
+      { type: "sketch", plane, sketchData: emptySketch(), params: { offset: Number.isFinite(offset) ? offset : 0 } },
       FEATURE_LABELS.sketch,
     );
     this.document.setSelection([feature.id]);
@@ -299,7 +304,7 @@ export class SugarApp implements HostServices {
         type: f.type,
         params: f.params,
         ...(f.solid ? { solid: f.solid } : {}),
-        ...(f.plane ? { plane: f.plane, entities: f.entities ?? [] } : {}),
+        ...(f.plane ? { plane: f.plane, sketchData: sketchDataOf(f) } : {}),
         position: [f.position[0] + 10, f.position[1] + 10, f.position[2]],
         rotation: f.rotation,
         name: `${f.name} kopya`,

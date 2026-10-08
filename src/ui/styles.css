@@ -1357,3 +1357,148 @@ select:focus {
     max-width: calc(100vw - 24px);
   }
 }
+
+
+/* ---- eskiz kısıtları ve ölçüleri ---- */
+.sketch-notes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 4;
+}
+
+.sketch-notes .note {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 0 5px;
+  font: 11px/18px var(--mono);
+  white-space: nowrap;
+}
+
+.sketch-notes .note.dim {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  font-size: 12px;
+}
+
+.sketch-notes .note.glyph {
+  min-width: 18px;
+  text-align: center;
+  padding: 0 3px;
+  color: var(--text-dim);
+}
+
+.sketch-notes .note:hover,
+.sketch-notes .note.selected {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--select);
+}
+
+.sketch-notes .note.conflict,
+.palette-row.conflict {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.sketch-notes .dim-editor {
+  position: absolute;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-elev);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 4px 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  z-index: 6;
+}
+
+.dim-editor input {
+  width: 72px;
+  height: 24px;
+}
+
+.dim-editor select {
+  width: auto;
+  height: 24px;
+}
+
+.dim-editor .btn {
+  height: 24px;
+  padding: 0 8px;
+}
+
+.dim-editor .dim-prefix,
+.dim-editor .unit {
+  color: var(--text-dim);
+}
+
+.palette-list {
+  display: grid;
+  gap: 3px;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.palette-row.selected {
+  background: var(--select);
+}
+
+.palette-row .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row input {
+  width: 64px;
+  height: 22px;
+}
+
+.palette-row .glyph {
+  width: 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-family: var(--mono);
+}
+
+.palette-row .unit {
+  color: var(--text-dim);
+}
+
+.btn.small {
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.statusbar .dof {
+  color: var(--text-dim);
+}
+
+.statusbar .dof.full {
+  color: var(--ok);
+}
+
+.statusbar .dof.conflict {
+  color: var(--danger);
+  font-weight: 600;
+}

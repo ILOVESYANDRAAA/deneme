@@ -1,4 +1,5 @@
-import { PLANES, planeMatrix, sketchProfiles, type PlaneName, type SketchEntity } from "./sketch";
+import { PLANES, planeMatrix, type PlaneName, type SketchEntity } from "./sketch";
+import { fromLegacyEntities, sketchDataProfiles, type SketchData } from "./sketchmodel";
 import type { BooleanOp, Solid, Vec2, Vec3 } from "./solid";
 
 /** Bir parametrenin özellik panelinde nasıl gösterileceği. */
@@ -26,8 +27,10 @@ export interface Feature {
   /** Sadece boolean özellikleri için. */
   op?: BooleanOp;
   operands?: [string, string];
-  /** Eskiz: düzlem ve çizilen öğeler. */
+  /** Eskiz: düzlem ve geometri (noktalar, eğriler, kısıtlar). */
   plane?: PlaneName;
+  sketchData?: SketchData;
+  /** Eski (v1) dosyalardaki eskiz öğeleri; açılırken `sketchData`'ya çevrilir. */
   entities?: SketchEntity[];
   /** Ekstrüzyon / döndürme: kullanılan eskizin kimliği. */
   sketch?: string;
@@ -287,10 +290,15 @@ export function featureSolid(
   }
 }
 
+/** Eskizin geometrisi (eski dosyalarda öğelerden çevrilir). */
+export function sketchDataOf(f: Feature): SketchData {
+  return f.sketchData ?? fromLegacyEntities(f.entities ?? []);
+}
+
 function profilesOf(feature: Feature, byId: Map<string, Feature>): { sketch: Feature; profiles: Vec2[][] } {
   const sketch = feature.sketch ? byId.get(feature.sketch) : undefined;
   if (!sketch || sketch.type !== "sketch") throw new Error(`${feature.name}: eskiz bulunamadı`);
-  const profiles = sketchProfiles(sketch.entities ?? []);
+  const profiles = sketchDataProfiles(sketchDataOf(sketch));
   if (profiles.length === 0) {
     throw new Error(`${feature.name}: "${sketch.name}" içinde kapalı şekil yok (dikdörtgen, daire ya da kapatılmış çizgi çizin)`);
   }

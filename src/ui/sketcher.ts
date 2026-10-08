@@ -1,25 +1,27 @@
 import type { SugarApp } from "../app/controller";
 import { Emitter } from "../core/events";
-import type { Feature } from "../core/features";
+import { sketchDataOf, type Feature } from "../core/features";
+import { PLANES, dist, niceStep, perp, roundPoint, snapToGrid, type PlaneName } from "../core/sketch";
+import { planConstraint, planDimension, type DimensionChoice } from "../core/constrain";
 import {
-  PLANES,
-  circleFrom3,
-  dist,
+  CONSTRAINT_LABELS,
+  SketchEdit,
+  buildArc3,
+  buildCircle3,
+  buildPolygon,
+  buildPolyline,
+  buildRect,
+  buildSlot,
+  curveSegments,
   filletCorner,
-  hitCorner,
-  hitEntity,
-  mirrorEntity,
-  niceStep,
-  perp,
-  polygonPoints,
-  roundPoint,
-  sketchSegments,
-  sketchSnapPoints,
-  snapToGrid,
-  type PlaneName,
-  type SketchEntity,
+  hitCurve,
+  hitPoint,
+  pointMap,
+  snapCandidates,
+  type GeometricConstraintType,
+  type SketchData,
   type SnapKind,
-} from "../core/sketch";
+} from "../core/sketchmodel";
 import type { Vec2 } from "../core/solid";
 import type { PointerHandler, Viewport } from "./viewport";
 
@@ -37,7 +39,9 @@ export type SketchTool =
   | "slot"
   | "ellipse"
   | "spline"
-  | "fillet";
+  | "point"
+  | "fillet"
+  | "dimension";
 
 interface ToolInfo {
   label: string;
@@ -72,6 +76,8 @@ export const TOOLS: Record<SketchTool, ToolInfo> = {
     clicks: "multi",
     hints: ["İlk noktaya tıklayın", "Eğrinin geçeceği noktalara tıklayın · ilk noktaya tıklayınca kapanır · Enter bitirir"],
   },
+  dimension: { label: "Ölçü", key: "D", clicks: 1, hints: ["Ölçülecek çizgi, daire, yay ya da nokta seçin (iki nokta / nokta + çizgi / iki çizgi de olur)"] },
+  point: { label: "Nokta", clicks: 1, hints: ["Noktayı yerleştirmek için tıklayın"] },
   fillet: { label: "Köşe Yuvarlatma", clicks: 1, hints: ["Yuvarlatılacak köşeye tıklayın (yarıçap Eskiz Paletinde)"] },
 };
 
@@ -105,9 +111,22 @@ export interface SketchOptions {
   snapPoints: boolean;
   construction: boolean;
   showProfiles: boolean;
+  showConstraints: boolean;
   polygonSides: number;
   filletRadius: number;
 }
+
+/** Ölçü kutusunda düzenlenen (henüz kaydedilmemiş ya da var olan) ölçü. */
+export interface DimensionDraft {
+  items: string[];
+  /** Seçilebilecek ölçü türleri (ilki öneridir); açılan ölçü düzenlemesinde tek öğedir. */
+  choices: DimensionChoice[];
+  index: number;
+  /** Var olan bir ölçü düzenleniyorsa kimliği. */
+  editing?: string;
+}
+
+const SIGNED = new Set(["hdistance", "vdistance", "angle"]);
 
 /** Yakalama mesafesi (piksel). */
 const SNAP_PX = 10;
@@ -133,9 +152,28 @@ export class Sketcher implements PointerHandler {
   /** İmleç neye yapıştı (köşe, merkez...); ızgaraya ya da hiçbir şeye değilse null. */
   snapKind: SnapKind | null = null;
   gridStep = 1;
-  /** Seçili öğelerin indeksleri (araç yokken tıklayarak seçilir). */
-  readonly selected = new Set<number>();
-  hovered = -1;
+  /** Yapım aşamasındaki noktaların yakalandığı mevcut nokta kimlikleri (aynı sırayla). */
+  private pendingIds: (string | null)[] = [];
+  /** Seçili öğeler: eğri ("c…"), nokta ("p…") ve kısıt ("k…") kimlikleri (araç yokken tıklayarak seçilir). */
+  readonly selected = new Set<string>();
+  hovered: string | null = null;
+  /** İmlecin yakalandığı mevcut nokta (varsa); yeni çizim ona bağlanır. */
+  private snapId: string | null = null;
+  /** Ölçü aracının topladığı öğeler ve açık ölçü kutusu. */
+  private dimPick: string[] = [];
+  draft: DimensionDraft | null = null;
+  /** Sürükleyerek düzenleme (araç yokken bir noktayı ya da eğriyi tutup çekmek). */
+  private drag: {
+    start: SketchData;
+    ids: string[];
+    origin: Vec2;
+    origins: Map<string, Vec2>;
+    active: boolean;
+    cx: number;
+    cy: number;
+  } | null = null;
+  /** Son çözümün durumu: serbestlik derecesi ve çelişen / gereksiz kısıtlar. */
+  solveInfo: { dof: number; conflicting: string[]; redundant: string[]; solved: boolean } = { dof: 0, conflicting: [], redundant: [], solved: false };
   /** Klavyeden yazılıp kilitlenen ölçüler. */
   private locked: Partial<Record<FieldKey, number>> = {};
   readonly options: SketchOptions = {
@@ -144,6 +182,7 @@ export class Sketcher implements PointerHandler {
     snapPoints: true,
     construction: false,
     showProfiles: true,
+    showConstraints: true,
     polygonSides: 6,
     filletRadius: 2,
   };
@@ -164,12 +203,13 @@ export class Sketcher implements PointerHandler {
       // Eskiz geri alma ile silindiyse moddan çık.
       if (!f || !f.plane) return this.exit();
       if (!this.keepSelection) this.selected.clear();
-      this.hovered = -1;
+      this.hovered = null;
+      this.refreshSolveInfo();
       // Düzlem ya da ofset değiştiyse kamera ve ızgara yeni düzleme geçsin.
       const where = `${f.plane}:${f.params.offset ?? 0}`;
       if (where !== this.where) {
         this.where = where;
-        this.pending = [];
+        this.resetPending();
         this.viewport.enterSketch(f.id, f.plane, f.params.offset ?? 0);
       }
       this.updatePreview();
@@ -185,8 +225,24 @@ export class Sketcher implements PointerHandler {
     return this.activeId ? this.app.document.get(this.activeId) : undefined;
   }
 
-  private entities(): SketchEntity[] {
-    return this.sketch()?.entities ?? [];
+  /** Etkin eskizin geometrisi (sürüklerken canlı veri, yoksa belgedeki). */
+  data(): SketchData {
+    const f = this.sketch();
+    return this.live ?? (f ? sketchDataOf(f) : { points: [], curves: [], constraints: [], next: 1 });
+  }
+
+  /** Sürükleme sırasında belgeye yazılmamış, çözülmüş geçici veri. */
+  private live: SketchData | null = null;
+
+  private refreshSolveInfo(): void {
+    const solver = this.app.solver;
+    const f = this.sketch();
+    if (!solver || !f) {
+      this.solveInfo = { dof: 0, conflicting: [], redundant: [], solved: false };
+      return;
+    }
+    const r = solver.solve(sketchDataOf(f));
+    this.solveInfo = { dof: r.dof, conflicting: r.conflicting, redundant: r.redundant, solved: true };
   }
 
   get plane(): PlaneName {
@@ -195,6 +251,11 @@ export class Sketcher implements PointerHandler {
 
   private get offset(): number {
     return this.sketch()?.params.offset ?? 0;
+  }
+
+  private resetPending(): void {
+    this.pending = [];
+    this.pendingIds = [];
   }
 
   /** Çizim yarıda mı (en az bir nokta tıklanmış)? */
@@ -217,13 +278,14 @@ export class Sketcher implements PointerHandler {
     if (!f || f.type !== "sketch" || !f.plane) throw new Error("Düzenlemek için bir eskiz seçin");
     this.viewport.cancelPlanePick();
     this.activeId = id;
-    this.pending = [];
+    this.resetPending();
     this.locked = {};
     this.selected.clear();
     this.tool = this.tool ?? "line";
     this.where = `${f.plane}:${f.params.offset ?? 0}`;
     this.viewport.enterSketch(id, f.plane, f.params.offset ?? 0);
     this.viewport.setInteraction(this);
+    this.refreshSolveInfo();
     this.syncViewOptions();
     this.app.document.setSelection([id]);
     this.onDidChange.fire();
@@ -232,8 +294,10 @@ export class Sketcher implements PointerHandler {
   setTool(tool: SketchTool | null): void {
     if (!this.isActive) throw new Error("Önce bir eskiz açın (Eskiz düğmesi)");
     this.tool = tool;
-    this.pending = [];
+    this.resetPending();
     this.locked = {};
+    this.dimPick = [];
+    this.draft = null;
     if (tool) this.selected.clear();
     this.updatePreview();
     this.onDidChange.fire();
@@ -264,11 +328,12 @@ export class Sketcher implements PointerHandler {
 
   private exit(): void {
     this.activeId = null;
-    this.pending = [];
+    this.resetPending();
     this.locked = {};
     this.cursor = null;
     this.selected.clear();
-    this.hovered = -1;
+    this.hovered = null;
+    this.live = null;
     this.viewport.setInteraction(null);
     this.viewport.exitSketch();
     this.onDidChange.fire();
@@ -276,8 +341,12 @@ export class Sketcher implements PointerHandler {
 
   /** Esc: önce yarım şekli, sonra seçimi, sonra aracı bırakır; hiçbiri yoksa eskizden çıkar. */
   escape(): void {
+    if (this.draft || this.dimPick.length) {
+      this.cancelDimension();
+      return;
+    }
     if (this.pending.length) {
-      this.pending = [];
+      this.resetPending();
       this.locked = {};
     } else if (this.selected.size) this.selected.clear();
     else if (this.tool) this.tool = null;
@@ -299,6 +368,7 @@ export class Sketcher implements PointerHandler {
   backspace(): void {
     if (!this.pending.length) return;
     this.pending.pop();
+    this.pendingIds.pop();
     this.locked = {};
     this.updatePreview();
     this.onDidChange.fire();
@@ -310,63 +380,152 @@ export class Sketcher implements PointerHandler {
 
   // ---- seçili öğeler ----
 
-  deleteSelected(): void {
-    const f = this.sketch();
-    if (!f || !this.selected.size) return;
-    const entities = this.entities().filter((_, i) => !this.selected.has(i));
-    this.selected.clear();
-    this.app.document.update(f.id, { entities });
-  }
-
-  /** Seçili öğeleri yapı çizgisine çevirir (ya da geri); seçim yoksa yeni çizimler için modu değiştirir. */
-  toggleConstruction(): void {
+  /** Verilen düzenlemeyi (kısıtlar çözülerek) belgeye yazar. Çelişki varsa çözülmemiş hâli yazar ve uyarır. */
+  apply(ed: SketchEdit, keepSelection = false): void {
     const f = this.sketch();
     if (!f) return;
-    if (!this.selected.size) {
-      this.setOption("construction", !this.options.construction);
-      return;
+    let data = ed.result();
+    const solver = this.app.solver;
+    if (solver && data.constraints.length) {
+      const r = solver.solve(data);
+      if (r.ok) data = r.data;
+      else if (r.conflicting.length) {
+        this.app.showMessage("Kısıtlar birbiriyle çelişiyor; çelişen kısıtlar kırmızı gösterilir (silerek düzeltin)", "warning");
+      } else this.app.showMessage("Kısıtlar çözülemedi; şekil değişmeden bırakıldı", "warning");
     }
-    const all = [...this.selected].every((i) => this.entities()[i]?.construction);
-    const entities = this.entities().map((e, i) => {
-      if (!this.selected.has(i)) return e;
-      const { construction: _c, ...rest } = e;
-      return (all ? rest : { ...rest, construction: true }) as SketchEntity;
-    });
-    this.updateKeepingSelection(f.id, entities);
-  }
-
-  /** Seçili öğelerin aynalanmış kopyalarını ekler (V: dikey eksen, U: yatay eksen). */
-  mirrorSelected(axis: "U" | "V"): void {
-    const f = this.sketch();
-    if (!f) return;
-    if (!this.selected.size) throw new Error("Aynalamak için önce öğe seçin (araç yokken tıklayın, Ctrl ile çoklu seçim)");
-    const entities = this.entities();
-    const copies = [...this.selected].sort((a, b) => a - b).map((i) => mirrorEntity(entities[i], axis));
-    this.app.document.update(f.id, { entities: [...entities, ...copies] });
-  }
-
-  selectAll(): void {
-    this.entities().forEach((_, i) => this.selected.add(i));
-    this.syncViewOptions();
-    this.onDidChange.fire();
-  }
-
-  private updateKeepingSelection(id: string, entities: SketchEntity[]): void {
-    this.keepSelection = true;
+    this.live = null;
+    this.keepSelection = keepSelection;
     try {
-      this.app.document.update(id, { entities });
+      this.app.document.update(f.id, { sketchData: data });
     } finally {
       this.keepSelection = false;
     }
   }
 
+  private edit_(): SketchEdit {
+    return new SketchEdit(this.data());
+  }
+
+  deleteSelected(): void {
+    if (!this.selected.size) return;
+    const ed = this.edit_();
+    const d = ed.d;
+    const curves = new Set([...this.selected].filter((id) => id.startsWith("c")));
+    // Seçili bir nokta, ona bağlı bütün eğrilerle birlikte silinir.
+    for (const id of this.selected) {
+      if (!id.startsWith("p")) continue;
+      for (const c of d.curves) if (curvePointIds(c).includes(id)) curves.add(c.id);
+    }
+    ed.deleteConstraints([...this.selected].filter((id) => id.startsWith("k")));
+    if (curves.size) ed.deleteCurves(curves);
+    this.selected.clear();
+    this.apply(ed);
+  }
+
+  /** Seçili eğrileri yapı çizgisine çevirir (ya da geri); seçim yoksa yeni çizimler için modu değiştirir. */
+  toggleConstruction(): void {
+    const ids = [...this.selected].filter((id) => id.startsWith("c"));
+    if (!ids.length) {
+      this.setOption("construction", !this.options.construction);
+      return;
+    }
+    const ed = this.edit_();
+    const all = ids.every((id) => ed.d.curves.find((c) => c.id === id)?.construction);
+    for (const c of ed.d.curves) {
+      if (!ids.includes(c.id)) continue;
+      if (all) delete c.construction;
+      else c.construction = true;
+    }
+    this.apply(ed, true);
+  }
+
+  /** Seçili eğrilerin aynalanmış kopyalarını ekler (V: dikey eksen, U: yatay eksen). */
+  mirrorSelected(axis: "U" | "V"): void {
+    const ids = [...this.selected].filter((id) => id.startsWith("c"));
+    if (!ids.length) throw new Error("Aynalamak için önce öğe seçin (araç yokken tıklayın, Ctrl ile çoklu seçim)");
+    const ed = this.edit_();
+    ed.copyCurves(ids, ([a, b]) => roundPoint(axis === "V" ? [-a, b] : [a, -b]), true);
+    this.apply(ed);
+  }
+
+  selectAll(): void {
+    this.data().curves.forEach((c) => this.selected.add(c.id));
+    this.syncViewOptions();
+    this.onDidChange.fire();
+  }
+
   // ---- fare ----
 
+  pointerDown(e: PointerEvent): void {
+    if (this.tool || e.button !== 0) return;
+    const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
+    const id = raw ? this.hit(raw) : null;
+    if (!raw || !id || id.startsWith("k")) return;
+    const d = this.data();
+    const pm = pointMap(d);
+    const curve = d.curves.find((c) => c.id === id);
+    const ids = curve ? [...new Set(curvePointIds(curve))] : [id];
+    this.drag = { start: structuredClone(d), ids, origin: raw, origins: new Map(ids.map((i) => [i, pm.get(i)!])), active: false, cx: e.clientX, cy: e.clientY };
+  }
+
+  pointerUp(): void {
+    const drag = this.drag;
+    this.drag = null;
+    if (!drag?.active) return;
+    const f = this.sketch();
+    const data = this.live;
+    this.live = null;
+    this.viewport.setLiveSketch(null);
+    if (!f || !data) return;
+    this.keepSelection = true;
+    try {
+      this.app.document.update(f.id, { sketchData: data });
+    } finally {
+      this.keepSelection = false;
+    }
+  }
+
+  /** Tutulan öğeyi imleçle birlikte sürükler; kısıtlar çözücüyle korunur. */
+  private dragTo(e: PointerEvent): void {
+    const drag = this.drag!;
+    if (!drag.active && Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy) < 4) return;
+    drag.active = true;
+    const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
+    if (!raw) return;
+    this.gridStep = niceStep(this.viewport.worldPerPixel() * 12);
+    const grabbed = drag.ids.length === 1 && this.options.snapGrid ? snapToGrid(raw, this.gridStep) : raw;
+    const delta: Vec2 = [grabbed[0] - drag.origin[0], grabbed[1] - drag.origin[1]];
+    const targets = drag.ids.map((point) => {
+      const o = drag.origins.get(point)!;
+      return { point, to: roundPoint([o[0] + delta[0], o[1] + delta[1]]) };
+    });
+    const solver = this.app.solver;
+    if (solver) {
+      const r = solver.solve(drag.start, { drag: targets });
+      this.solveInfo = { dof: r.dof, conflicting: r.conflicting, redundant: r.redundant, solved: true };
+      if (r.ok) this.live = r.data;
+    } else {
+      const moved = structuredClone(drag.start);
+      for (const t of targets) {
+        const p = moved.points.find((q) => q.id === t.point);
+        if (p) [p.x, p.y] = t.to;
+      }
+      this.live = moved;
+    }
+    if (this.live) this.viewport.setLiveSketch(this.live);
+    this.cursor = roundPoint(raw);
+    this.onDidChange.fire();
+  }
+
   pointerMove(e: PointerEvent): void {
+    if (this.drag && e.buttons & 1) {
+      this.dragTo(e);
+      return;
+    }
     this.cursor = this.snap(e.clientX, e.clientY);
     if (!this.tool) {
       const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
-      const hovered = raw ? hitEntity(this.entities(), raw, SNAP_PX * this.viewport.worldPerPixel()) : -1;
+      const hovered = raw ? this.hit(raw) : null;
       if (hovered !== this.hovered) {
         this.hovered = hovered;
         this.syncViewOptions();
@@ -378,16 +537,27 @@ export class Sketcher implements PointerHandler {
 
   pointerLeave(): void {
     this.cursor = null;
-    this.hovered = -1;
+    this.hovered = null;
     this.syncViewOptions();
     this.updatePreview();
+  }
+
+  /** Eskiz koordinatındaki öğe: önce nokta, sonra eğri. */
+  private hit(raw: Vec2): string | null {
+    const tol = SNAP_PX * this.viewport.worldPerPixel();
+    const d = this.data();
+    return hitPoint(d, raw, tol) ?? hitCurve(d, raw, tol);
   }
 
   click(e: PointerEvent): void {
     if (!this.tool) {
       const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
-      const hit = raw ? hitEntity(this.entities(), raw, SNAP_PX * this.viewport.worldPerPixel()) : -1;
-      this.selectEntity(hit, e.ctrlKey || e.metaKey || e.shiftKey);
+      this.selectItem(raw ? this.hit(raw) : null, e.ctrlKey || e.metaKey || e.shiftKey);
+      return;
+    }
+    if (this.tool === "dimension") {
+      const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
+      this.pickForDimension(raw ? this.hit(raw) : null);
       return;
     }
     const p = this.snap(e.clientX, e.clientY);
@@ -400,24 +570,24 @@ export class Sketcher implements PointerHandler {
     if (this.tool === "line" || this.tool === "spline") this.commitMulti(false);
   }
 
-  /** Öğe seçimi (indeks −1: boşluğa tıklama). */
-  selectEntity(index: number, toggle = false): void {
+  /** Öğe seçimi (null: boşluğa tıklama). */
+  selectItem(id: string | null, toggle = false): void {
     if (!toggle) this.selected.clear();
-    if (index >= 0) {
-      if (toggle && this.selected.has(index)) this.selected.delete(index);
-      else this.selected.add(index);
+    if (id) {
+      if (toggle && this.selected.has(id)) this.selected.delete(id);
+      else this.selected.add(id);
     }
     this.syncViewOptions();
     this.onDidChange.fire();
   }
 
-  /** Eskiz koordinatında bir tıklama (fare ve testler bunu kullanır). */
-  addPoint(p: Vec2): void {
+  /** Eskiz koordinatında bir tıklama (fare ve testler bunu kullanır). `id`: yakalanan mevcut nokta. */
+  addPoint(p: Vec2, id: string | null = this.snapId): void {
     const tool = this.tool;
     if (!tool) return;
     const info = TOOLS[tool];
     if (tool === "fillet") {
-      this.filletAt(p);
+      this.filletAt(p, id);
       return;
     }
     if (info.clicks === "multi") {
@@ -428,6 +598,7 @@ export class Sketcher implements PointerHandler {
         return;
       }
       this.pending.push(p);
+      this.pendingIds.push(id);
       this.locked = {};
       this.updatePreview();
       this.onDidChange.fire();
@@ -435,46 +606,185 @@ export class Sketcher implements PointerHandler {
     }
     if (this.pending.some((q) => same(q, p))) return; // aynı noktaya ikinci tık
     const points = [...this.pending, p];
+    const ids = [...this.pendingIds, id];
     if (points.length < info.clicks) {
       this.pending = points;
+      this.pendingIds = ids;
       this.locked = {};
       this.updatePreview();
       this.onDidChange.fire();
       return;
     }
-    const entity = buildEntity(tool, points, this.options);
     // Geçersiz (sıfır boyutlu, doğrusal) şekilde son tık yok sayılır.
-    if (entity) this.commit(entity);
+    const ed = this.edit_();
+    if (!buildTool(ed, tool, points, ids, this.options, this.options.construction)) return;
+    this.resetPending();
+    this.locked = {};
+    this.apply(ed);
   }
 
-  private filletAt(p: Vec2): void {
-    const f = this.sketch();
-    if (!f) return;
-    const hit = hitCorner(this.entities(), p, SNAP_PX * 1.5 * this.viewport.worldPerPixel());
-    if (!hit) {
-      this.app.showMessage("Yuvarlatmak için çizgi ya da dikdörtgen köşesine tıklayın", "warning");
+  private filletAt(p: Vec2, id: string | null): void {
+    const pointId = id ?? hitPoint(this.data(), p, SNAP_PX * 1.5 * this.viewport.worldPerPixel());
+    if (!pointId) {
+      this.app.showMessage("Yuvarlatmak için iki çizginin birleştiği köşeye tıklayın", "warning");
       return;
     }
-    const entities = [...this.entities()];
-    entities[hit.entity] = filletCorner(entities[hit.entity], hit.vertex, this.options.filletRadius);
-    this.app.document.update(f.id, { entities });
+    const ed = this.edit_();
+    try {
+      filletCorner(ed, pointId, this.options.filletRadius);
+    } catch (e) {
+      this.reportError(e);
+      return;
+    }
+    this.apply(ed);
   }
 
   private commitMulti(closed: boolean): void {
     if (this.pending.length < 2) return;
-    const points = this.pending;
-    this.commit(
-      this.tool === "spline" ? { kind: "spline", points, closed } : { kind: "polyline", points, closed },
-    );
+    const ed = this.edit_();
+    const opts = { construction: this.options.construction, snapped: this.pendingIds };
+    if (this.tool === "spline") {
+      const ids = this.pending.map((q, i) => ed.pointAt(q, this.pendingIds[i]));
+      ed.spline(ids, closed, this.options.construction);
+    } else {
+      buildPolyline(ed, this.pending, closed, opts);
+    }
+    this.resetPending();
+    this.locked = {};
+    this.apply(ed);
   }
 
-  private commit(entity: SketchEntity): void {
+  // ---- kısıtlar ve ölçüler ----
+
+  /** Kısıt/ölçü eklemeyi dener: çözücü çelişki bulursa hiçbir şeyi değiştirmez. */
+  private tryApply(ed: SketchEdit): boolean {
     const f = this.sketch();
-    if (!f) return;
-    this.pending = [];
-    this.locked = {};
-    const e = this.options.construction ? { ...entity, construction: true } : entity;
-    this.app.document.update(f.id, { entities: [...(f.entities ?? []), e] });
+    if (!f) return false;
+    let data = ed.result();
+    const solver = this.app.solver;
+    if (solver) {
+      const r = solver.solve(data);
+      if (r.conflicting.length) {
+        this.app.showMessage("Bu kısıt / ölçü mevcut kısıtlarla çelişiyor; eklenmedi", "error");
+        return false;
+      }
+      if (!r.ok) {
+        this.app.showMessage("Çözücü bu kısıtla bir çözüm bulamadı; eklenmedi", "error");
+        return false;
+      }
+      data = r.data;
+    }
+    this.live = null;
+    this.app.document.update(f.id, { sketchData: data });
+    return true;
+  }
+
+  /** Seçili öğelere geometrik kısıt uygular (Yatay, Dik, Teğet, Sabit...). Uygunsuz seçimde hata fırlatır. */
+  applyConstraint(type: GeometricConstraintType): void {
+    if (!this.isActive) throw new Error("Önce bir eskiz açın");
+    const ed = this.edit_();
+    const ids = [...this.selected].filter((id) => !id.startsWith("k"));
+    const plan = planConstraint(ed.d, type, ids);
+    if (!plan.add.length && !plan.remove.length) {
+      this.app.showMessage(`${CONSTRAINT_LABELS[type]}: bu kısıt zaten var`, "info");
+      return;
+    }
+    ed.deleteConstraints(plan.remove);
+    for (const c of plan.add) ed.constrain(c.type, c.refs, c.at ? { at: c.at } : {});
+    if (this.tryApply(ed)) {
+      this.selected.clear();
+      this.syncViewOptions();
+      this.onDidChange.fire();
+    }
+  }
+
+  /** Ölçü aracı: tıklanan öğeleri toplar, uygun olunca ölçü kutusunu açar. */
+  private pickForDimension(id: string | null): void {
+    if (!id || id.startsWith("k")) return;
+    const items = [...(this.draft && !this.draft.editing ? this.draft.items : this.dimPick), id];
+    try {
+      this.draft = { items, choices: planDimension(this.data(), items), index: 0 };
+      this.dimPick = [];
+    } catch (e) {
+      if (this.draft && !this.draft.editing) {
+        this.reportError(e); // açık kutu varsa onu bozmadan uyar
+      } else if (items.length >= 2) {
+        this.dimPick = [id];
+        this.reportError(e);
+      } else this.dimPick = items; // ilk nokta: ikincisini bekle
+    }
+    this.onDidChange.fire();
+  }
+
+  /** Var olan bir ölçünün değerini kutuda düzenlemeye açar. */
+  beginEditDimension(id: string): void {
+    const k = this.data().constraints.find((c) => c.id === id);
+    if (!k || k.value === undefined) throw new Error("Bu bir ölçü değil");
+    this.draft = { items: k.refs, choices: [{ type: k.type as DimensionChoice["type"], refs: k.refs, value: k.value }], index: 0, editing: id };
+    this.onDidChange.fire();
+  }
+
+  setDimensionChoice(index: number): void {
+    if (this.draft && this.draft.choices[index]) {
+      this.draft = { ...this.draft, index };
+      this.onDidChange.fire();
+    }
+  }
+
+  cancelDimension(): void {
+    this.draft = null;
+    this.dimPick = [];
+    this.onDidChange.fire();
+  }
+
+  /**
+   * Yazılan ölçüyü geçerli hâle getirir: boyutlar pozitif olmalı; yatay / dikey mesafe mevcut yönü
+   * korur (açık eksi işaret yazılırsa ters yön kurulur). Geçersizse null.
+   */
+  private normalizeDimension(type: string, current: number, value: number): number | null {
+    if (!Number.isFinite(value)) return null;
+    if (!SIGNED.has(type)) return value > 0 ? value : null;
+    if (type === "angle") return value;
+    return Math.abs(value) * (value < 0 ? -1 : Math.sign(current) || 1);
+  }
+
+  /** Açık ölçü kutusundaki değeri kaydeder. Çelişirse kutu açık kalır ve false döner. */
+  commitDimension(value: number): boolean {
+    const dr = this.draft;
+    if (!dr) return false;
+    const choice = dr.choices[dr.index];
+    const signed = this.normalizeDimension(choice.type, choice.value, value);
+    if (signed === null) {
+      this.app.showMessage("Geçerli bir değer girin (0'dan büyük)", "warning");
+      return false;
+    }
+    const ed = this.edit_();
+    if (dr.editing) {
+      const k = ed.d.constraints.find((c) => c.id === dr.editing);
+      if (!k) return false;
+      k.value = signed;
+    } else {
+      ed.constrain(choice.type, choice.refs, { value: signed });
+    }
+    if (!this.tryApply(ed)) return false;
+    this.draft = null;
+    this.dimPick = [];
+    this.onDidChange.fire();
+    return true;
+  }
+
+  /** Var olan bir ölçünün değerini (kutu açmadan) değiştirir; çelişirse reddeder. */
+  setDimensionValue(id: string, value: number): boolean {
+    const ed = this.edit_();
+    const k = ed.d.constraints.find((c) => c.id === id);
+    if (!k || k.value === undefined) return false;
+    const signed = this.normalizeDimension(k.type, k.value, value);
+    if (signed === null) {
+      this.app.showMessage("Geçerli bir değer girin (0'dan büyük)", "warning");
+      return false;
+    }
+    k.value = signed;
+    return this.tryApply(ed);
   }
 
   // ---- yazılan ölçüler ----
@@ -646,12 +956,13 @@ export class Sketcher implements PointerHandler {
     const wpp = this.viewport.worldPerPixel();
     this.gridStep = niceStep(wpp * 12);
     this.snapKind = null;
+    this.snapId = null;
     if (this.options.snapPoints) {
-      const candidates = [
-        ...sketchSnapPoints(this.entities()),
-        ...this.pending.map((p) => ({ p, kind: "köşe" as SnapKind })),
+      const candidates: { p: Vec2; kind: SnapKind; pointId?: string }[] = [
+        ...snapCandidates(this.data()),
+        ...this.pending.map((p, i) => ({ p, kind: "köşe" as SnapKind, pointId: this.pendingIds[i] ?? undefined })),
       ];
-      let best: { p: Vec2; kind: SnapKind } | null = null;
+      let best: (typeof candidates)[number] | null = null;
       let bestDist = SNAP_PX * wpp;
       for (const c of candidates) {
         // Köşeler orta noktalardan önceliklidir.
@@ -663,6 +974,8 @@ export class Sketcher implements PointerHandler {
       }
       if (best) {
         this.snapKind = best.kind;
+        // Orta nokta yeni bir nokta üretir (ona bağlanılmaz); diğerleri mevcut noktayı paylaşır.
+        this.snapId = best.kind === "orta nokta" ? null : (best.pointId ?? null);
         return [best.p[0], best.p[1]];
       }
     }
@@ -686,11 +999,15 @@ export class Sketcher implements PointerHandler {
     if (tool && tool !== "fillet" && p.length && c) {
       const info = TOOLS[tool];
       const points = [...p, c];
+      // Gerçek şekli boş bir eskize kurup parçalarını çizeriz: önizleme ile sonuç hep aynı olur.
+      const scratch = new SketchEdit();
       if (info.clicks === "multi") {
-        segs.push(...sketchSegments([tool === "spline" ? { kind: "spline", points, closed: false } : { kind: "polyline", points, closed: false }]));
+        const ids = points.map((q) => scratch.point(q));
+        if (tool === "spline") scratch.spline(ids, false);
+        else scratch.polyline(ids, false);
+        segs.push(...previewSegments(scratch));
       } else if (points.length === info.clicks) {
-        const e = buildEntity(tool, points, this.options);
-        if (e) segs.push(...sketchSegments([e]));
+        if (buildTool(scratch, tool, points, [], this.options)) segs.push(...previewSegments(scratch));
         // Daire ve çokgende yarıçap çizgisi, yayda merkez çizgileri yardımcı olur.
         if (tool === "circle" || tool === "polygon") segs.push([p[0], c]);
       } else {
@@ -698,7 +1015,11 @@ export class Sketcher implements PointerHandler {
         for (let i = 0; i + 1 < points.length; i++) segs.push([points[i], points[i + 1]]);
         if (tool === "arcCenter" && p.length === 1) {
           const r = dist(p[0], c);
-          if (r > 0) segs.push(...sketchSegments([{ kind: "circle", c: p[0], r }]));
+          if (r > 0) {
+            const circle = new SketchEdit();
+            circle.circle(circle.point(p[0]), r);
+            segs.push(...previewSegments(circle));
+          }
         }
       }
     }
@@ -724,75 +1045,123 @@ export class Sketcher implements PointerHandler {
   }
 }
 
-/** Tıklanan noktalardan öğe kurar; geçersiz (sıfır boyutlu, doğrusal) ise null. */
-export function buildEntity(tool: SketchTool, pts: Vec2[], options: Pick<SketchOptions, "polygonSides">): SketchEntity | null {
+function previewSegments(ed: SketchEdit): [Vec2, Vec2][] {
+  const pm = ed.pm;
+  return ed.d.curves.flatMap((c) => curveSegments(ed.d, c, pm));
+}
+
+function curvePointIds(c: SketchData["curves"][number]): string[] {
+  switch (c.kind) {
+    case "line":
+      return [c.p1, c.p2];
+    case "circle":
+    case "ellipse":
+      return [c.c];
+    case "arc":
+      return [c.c, c.s, c.e];
+    case "spline":
+      return c.pts;
+    case "point":
+      return [c.p];
+  }
+}
+
+/**
+ * Tıklanan noktalardan şekli `ed`'e kurar (yeni eğriler + otomatik kısıtlar). Geçersiz
+ * (sıfır boyutlu, doğrusal) ise hiçbir şey eklemeden false döner. `ids`: tıklamaların yakalandığı
+ * mevcut nokta kimlikleri; onlar yeniden kullanılır ki yeni şekil mevcut olana bağlansın.
+ */
+export function buildTool(
+  ed: SketchEdit,
+  tool: SketchTool,
+  pts: Vec2[],
+  ids: (string | null | undefined)[],
+  options: Pick<SketchOptions, "polygonSides">,
+  construction?: boolean,
+): boolean {
   const tiny = 1e-9;
+  const o = (snapped: (string | null | undefined)[]) => ({ construction, snapped });
   switch (tool) {
     case "rect": {
       const [a, b] = pts;
-      return Math.abs(a[0] - b[0]) > tiny && Math.abs(a[1] - b[1]) > tiny ? { kind: "rect", a, b } : null;
+      if (Math.abs(a[0] - b[0]) <= tiny || Math.abs(a[1] - b[1]) <= tiny) return false;
+      buildRect(ed, [a, [b[0], a[1]], b, [a[0], b[1]]], o([ids[0], null, ids[1], null]));
+      return true;
     }
     case "rectCenter": {
       const [c, b] = pts;
       const a = roundPoint([2 * c[0] - b[0], 2 * c[1] - b[1]]);
-      return Math.abs(a[0] - b[0]) > tiny && Math.abs(a[1] - b[1]) > tiny ? { kind: "rect", a, b } : null;
+      if (Math.abs(a[0] - b[0]) <= tiny || Math.abs(a[1] - b[1]) <= tiny) return false;
+      buildRect(ed, [a, [b[0], a[1]], b, [a[0], b[1]]], o([null, null, ids[1], null]));
+      return true;
     }
     case "rect3": {
       const [p0, p1, p2] = pts;
-      if (dist(p0, p1) < tiny) return null;
+      if (dist(p0, p1) < tiny) return false;
       const n = perp(sub(p1, p0));
       const h = dot(sub(p2, p1), n);
-      if (Math.abs(h) < tiny) return null;
-      return { kind: "polyline", points: [p0, p1, roundPoint(along(p1, n, h)), roundPoint(along(p0, n, h))], closed: true };
+      if (Math.abs(h) < tiny) return false;
+      buildRect(ed, [p0, p1, roundPoint(along(p1, n, h)), roundPoint(along(p0, n, h))], o([ids[0], ids[1], null, null]));
+      return true;
     }
     case "circle": {
       const r = dist(pts[0], pts[1]);
-      return r > tiny ? { kind: "circle", c: pts[0], r: Number(r.toFixed(6)) } : null;
+      if (r <= tiny) return false;
+      ed.circle(ed.pointAt(pts[0], ids[0]), r, construction);
+      return true;
     }
     case "circle2": {
       const r = dist(pts[0], pts[1]) / 2;
-      const c = roundPoint([(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2]);
-      return r > tiny ? { kind: "circle", c, r: Number(r.toFixed(6)) } : null;
+      if (r <= tiny) return false;
+      ed.circle(ed.point(roundPoint([(pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2])), r, construction);
+      return true;
     }
-    case "circle3": {
-      const g = circleFrom3(pts[0], pts[1], pts[2]);
-      return g ? { kind: "circle", c: roundPoint(g.c), r: Number(g.r.toFixed(6)) } : null;
-    }
+    case "circle3":
+      return buildCircle3(ed, pts[0], pts[1], pts[2], o([])) !== null;
     case "arc3": {
       const [start, end, through] = pts;
-      return circleFrom3(start, through, end) ? { kind: "arc", p0: start, p1: through, p2: end } : null;
+      return buildArc3(ed, start, end, through, o([ids[0], ids[1]])) !== null;
     }
     case "arcCenter": {
       const [c, start, end] = pts;
       const r = dist(c, start);
-      if (r < tiny) return null;
+      if (r < tiny) return false;
       const a0 = Math.atan2(start[1] - c[1], start[0] - c[0]);
       const a1 = Math.atan2(end[1] - c[1], end[0] - c[0]);
       const sweep = (((a1 - a0) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-      if (sweep < 1e-6) return null;
-      const mid = a0 + sweep / 2;
-      return {
-        kind: "arc",
-        p0: start,
-        p1: roundPoint([c[0] + r * Math.cos(mid), c[1] + r * Math.sin(mid)]),
-        p2: roundPoint([c[0] + r * Math.cos(a1), c[1] + r * Math.sin(a1)]),
-      };
+      if (sweep < 1e-6) return false;
+      const e = roundPoint([c[0] + r * Math.cos(a1), c[1] + r * Math.sin(a1)]);
+      const cp = ed.pointAt(c, ids[0]);
+      const sp = ed.pointAt(start, ids[1]);
+      // Bitiş tıklaması yayın ucuna yapıştıysa o nokta kullanılır, değilse uç yeni bir nokta olur.
+      const endClick = ids[2] ? ed.pm.get(ids[2]) : undefined;
+      const ep = endClick && dist(endClick, e) < 1e-6 ? ids[2]! : ed.point(e);
+      ed.arc(cp, sp, ep, construction);
+      return true;
     }
     case "polygon":
-      return dist(pts[0], pts[1]) > tiny ? { kind: "polyline", points: polygonPoints(pts[0], pts[1], options.polygonSides), closed: true } : null;
+      if (dist(pts[0], pts[1]) <= tiny) return false;
+      buildPolygon(ed, pts[0], pts[1], options.polygonSides, o([ids[0], ids[1]]));
+      return true;
     case "slot": {
       const [a, b, w] = pts;
       const r = Math.abs(dot(sub(w, a), perp(sub(b, a))));
-      return r > tiny && dist(a, b) > tiny ? { kind: "slot", a, b, r: Number(r.toFixed(6)) } : null;
+      if (r <= tiny || dist(a, b) <= tiny) return false;
+      buildSlot(ed, a, b, Number(r.toFixed(6)), o([ids[0], ids[1]]));
+      return true;
     }
     case "ellipse": {
       const [c, major, q] = pts;
       const rx = dist(c, major);
       const ry = Math.abs(dot(sub(q, c), perp(sub(major, c))));
-      if (rx < tiny || ry < tiny) return null;
-      return { kind: "ellipse", c, rx: Number(rx.toFixed(6)), ry: Number(ry.toFixed(6)), rot: Number(Math.atan2(major[1] - c[1], major[0] - c[0]).toFixed(9)) };
+      if (rx < tiny || ry < tiny) return false;
+      ed.ellipse(ed.pointAt(c, ids[0]), rx, ry, Math.atan2(major[1] - c[1], major[0] - c[0]), construction);
+      return true;
     }
+    case "point":
+      ed.standalone(ed.pointAt(pts[0], ids[0]));
+      return true;
     default:
-      return null;
+      return false;
   }
 }
