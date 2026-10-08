@@ -1382,6 +1382,10 @@ select:focus {
   white-space: nowrap;
 }
 
+/* Çizim / düzenleme aracı açıkken simgeler tıklamayı yutmasın. */
+.sketch-notes.tool-active .note.glyph {
+  pointer-events: none;
+}
 .sketch-notes .note.dim {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
   font-size: 12px;

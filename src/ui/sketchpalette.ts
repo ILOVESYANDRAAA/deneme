@@ -21,6 +21,7 @@ export class SketchPalette {
   private checks = new Map<BoolOption, HTMLInputElement>();
   private sides: HTMLInputElement;
   private radius: HTMLInputElement;
+  private offset: HTMLInputElement;
   private selection = h("div", { class: "palette-selection" });
   private summary = h("div", { class: "meta" });
   private dimensions = h("div", { class: "palette-list", attrs: { "aria-label": "Ölçüler" } });
@@ -37,6 +38,7 @@ export class SketchPalette {
     }
     this.sides = this.number(sketcher.options.polygonSides, 1, (v) => sketcher.setOption("polygonSides", Math.min(64, Math.max(3, Math.round(v)))));
     this.radius = this.number(sketcher.options.filletRadius, 0.5, (v) => sketcher.setOption("filletRadius", Math.max(0, v)));
+    this.offset = this.number(sketcher.options.offsetDistance, 0.5, (v) => sketcher.setOption("offsetDistance", Math.max(0, v)));
     this.element = h(
       "div",
       { class: "sketch-palette form" },
@@ -45,6 +47,7 @@ export class SketchPalette {
       h("h3", {}, "Araç ayarları"),
       h("div", { class: "field" }, h("label", { htmlFor: "pal-sides" }, "Çokgen kenar sayısı"), this.sides),
       h("div", { class: "field" }, h("label", { htmlFor: "pal-radius" }, "Yuvarlatma yarıçapı"), this.radius),
+      h("div", { class: "field" }, h("label", { htmlFor: "pal-offset" }, "Ofset mesafesi (0: imleçle)"), this.offset),
       h("h3", {}, "Seçim"),
       this.selection,
       this.summary,
@@ -60,6 +63,7 @@ export class SketchPalette {
     );
     this.sides.id = "pal-sides";
     this.radius.id = "pal-radius";
+    this.offset.id = "pal-offset";
     sketcher.onDidChange.on(() => this.render());
     this.render();
   }
@@ -80,6 +84,7 @@ export class SketchPalette {
     for (const [key, input] of this.checks) input.checked = sk.options[key];
     if (document.activeElement !== this.sides) this.sides.value = String(sk.options.polygonSides);
     if (document.activeElement !== this.radius) this.radius.value = String(sk.options.filletRadius);
+    if (document.activeElement !== this.offset) this.offset.value = String(sk.options.offsetDistance);
     const n = sk.selected.size;
     const run = (fn: () => void) => () => {
       try {

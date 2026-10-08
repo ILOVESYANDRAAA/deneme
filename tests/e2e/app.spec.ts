@@ -502,3 +502,75 @@ test("sürükleyerek düzenleme: kısıtlar korunur; kısıtlar menüden ve seç
   await page.screenshot({ path: `${S}/14-surukleme-kisit.png` });
   expect(errors).toEqual([]);
 });
+
+test("düzenleme araçları: kırp, ofset, kopyala ve desen", async ({ page }) => {
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [-20, -10]);
+  await clickSketch(page, [20, 10]);
+  await page.keyboard.press("l");
+  await clickSketch(page, [0, -20]);
+  await clickSketch(page, [0, 20], { double: true });
+  await expect.poll(async () => (await sketchData(page)).curves.length).toBe(5);
+
+  // Kırp: dikdörtgenin dışında kalan uçlar silinir, çizgi iki kenar arasında kalır
+  await page.keyboard.press("k");
+  await expect(page.locator(".statusbar")).toContainText("Kırp:");
+  await clickSketch(page, [0, 15]);
+  await clickSketch(page, [0, -15]);
+  await expect
+    .poll(async () => {
+      const d = await sketchData(page);
+      const ys = d.points.map((p: any) => p.y);
+      return [Math.min(...ys), Math.max(...ys)];
+    })
+    .toEqual([-10, 10]);
+
+  // Ofset: dikdörtgenin dışına 5 mm; dört yeni çizgi
+  await page.getByLabel("Ofset mesafesi (0: imleçle)").fill("5");
+  await page.keyboard.press("Tab");
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.tool.offset"));
+  await clickSketch(page, [20, 0]); // dikdörtgenin sağ kenarı
+  await expect(page.locator(".statusbar")).toContainText("Yönü belirlemek için");
+  await clickSketch(page, [27, 0]); // dışa doğru
+  await expect.poll(async () => (await sketchData(page)).curves.length).toBe(9);
+  const xs = (await sketchData(page)).points.map((p: any) => p.x);
+  expect(Math.max(...xs)).toBeCloseTo(25, 3);
+  await page.screenshot({ path: `${S}/15-kirp-ofset.png` });
+
+  // Kopyala: hepsi seçili → 100 mm sağa kopya
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+a");
+  await page.evaluate(() => void (window as any).sugarcad.commands.run("sketch.copy").catch(() => {}));
+  const dialog = page.getByRole("dialog", { name: "Kopyala" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("X kaydırma (mm)").fill("100");
+  await dialog.getByLabel("Y kaydırma (mm)").fill("0");
+  await dialog.getByRole("button", { name: "Tamam" }).click();
+  await expect.poll(async () => (await sketchData(page)).curves.length).toBe(18);
+  expect(Math.max(...(await sketchData(page)).points.map((p: any) => p.x))).toBeCloseTo(125, 3);
+
+  // Geri al tek adımda kopyaları kaldırır
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await sketchData(page)).curves.length).toBe(9);
+
+  // Dikdörtgensel desen: 2×2 → 3 kopya
+  await page.keyboard.press("Control+a");
+  await page.evaluate(() => void (window as any).sugarcad.commands.run("sketch.patternRect").catch(() => {}));
+  const pattern = page.getByRole("dialog", { name: "Dikdörtgensel Desen" });
+  await pattern.getByLabel("X yönünde adet").fill("2");
+  await pattern.getByLabel("Y yönünde adet").fill("2");
+  await pattern.getByLabel("X aralığı (mm)").fill("100");
+  await pattern.getByLabel("Y aralığı (mm)").fill("100");
+  await pattern.getByRole("button", { name: "Tamam" }).click();
+  await expect.poll(async () => (await sketchData(page)).curves.length).toBe(36);
+
+  // Seçimsiz düzenleme anlaşılır hata verir
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => (window as any).sugarcadUi.sketcher.selected.clear());
+  await page.evaluate(() => void (window as any).sugarcad.commands.run("sketch.rotate").catch(() => {}));
+  await expect(page.locator(".toast.error")).toContainText("Önce eskizde öğe seçin");
+  expect(errors).toEqual([]);
+});

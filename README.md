@@ -36,6 +36,14 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
     **Yay** (3 nokta / merkez noktalı), **Çokgen**, **Kanal**, **Elips**, **Eğri** (spline)
   - Düzenleme: öğeleri tıklayarak seçme (Ctrl ile çoklu), silme, **Köşe Yuvarlatma**, **Yapı çizgisi**
     (profile katılmayan yardımcı çizgi), dikey / yatay eksende **Aynala**
+  - **Kırp** (`K`): kesişimler arasındaki parçayı siler; daire kırpılınca yay olur. **Uzat** (`U`): çizginin ucunu
+    en yakın kesişime uzatır. **Ofset** (`O`): eğriyi (bağlı zinciriyle, köşeleri gönyeleyerek) öteler; mesafe
+    Eskiz Paleti'nde, 0 ise imlecin uzaklığı kullanılır
+  - **Taşı / Kopyala / Döndür** ve **Dikdörtgensel / Dairesel Desen**: seçili öğelere uygulanır (DEĞİŞTİR menüsü)
+  - **Kısıtlar** (KISITLAR grubu): çakışık, yatay, dikey, paralel, dik, teğet, eşit, sabit, orta nokta, eş merkezli,
+    eğri üzerinde, simetrik. **Ölçü** (`D`): mesafe, yatay / dikey mesafe, çap, yarıçap, açı; ölçü etiketine çift
+    tıklayınca değişir ve şekil çözücüyle yeniden hesaplanır. Noktaları / çizgileri sürüklemek kısıtları korur.
+    Durum çubuğu "Tam tanımlı" / "N serbestlik" / "Çelişen kısıt" gösterir
   - **Ölçü yazma:** çizerken rakam yazınca imlecin yanındaki kutucuklara uzunluk, açı, genişlik, çap...
     girilir; `Tab` sonraki ölçü, `Enter` onay
   - Uç uca eklenen çizgi ve yaylar otomatik kapalı profil olur; kapalı bölgeler boyanır
@@ -58,6 +66,7 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
 | --- | --- |
 | `S` | Yeni eskiz (düzlem seç) |
 | `L` / `R` / `C` / `A` / `P` / `T` | Eskizde: Çizgi / Dikdörtgen / Daire / Yay / Çokgen / Kanal |
+| `D` / `K` / `U` / `O` | Eskizde: Ölçü / Kırp / Uzat / Ofset |
 | rakam, `Tab`, `Enter` | Çizerken ölçü yaz, sonraki ölçü, onayla |
 | `Enter` / çift tık | Çizgiyi / eğriyi açık bırakıp bitir |
 | `Backspace` | Son noktayı geri al |
@@ -157,8 +166,8 @@ exports.activate = (sugarcad) => {
 
 ## Yol haritası
 
-- Katı yüzeyine eskiz çizme, eskizde kalıcı ölçülendirme ve kısıtlar (yatay, dik, teğet...)
+- Katı yüzeyine eskiz çizme
 - 3D kenar yuvarlatma / pah, kabuk, süpürme (sweep) ve loft
-- Eskizde kırpma (trim) ve ofset; ekstrüzyonda "bir sonrakine kadar" seçeneği
+- Ekstrüzyonda "bir sonrakine kadar" seçeneği
 - Eklenti mağazası (indir / güncelle)
 - STEP / 3MF içe ve dışa aktarma

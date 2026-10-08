@@ -22,6 +22,7 @@ import {
   type SketchData,
   type SnapKind,
 } from "../core/sketchmodel";
+import { extendCurve, offsetCurves, patternCircular, patternRect, rotateAbout, trimCurve, translateBy } from "../core/sketchops";
 import type { Vec2 } from "../core/solid";
 import type { PointerHandler, Viewport } from "./viewport";
 
@@ -41,6 +42,9 @@ export type SketchTool =
   | "spline"
   | "point"
   | "fillet"
+  | "trim"
+  | "extend"
+  | "offset"
   | "dimension";
 
 interface ToolInfo {
@@ -79,7 +83,21 @@ export const TOOLS: Record<SketchTool, ToolInfo> = {
   dimension: { label: "Ölçü", key: "D", clicks: 1, hints: ["Ölçülecek çizgi, daire, yay ya da nokta seçin (iki nokta / nokta + çizgi / iki çizgi de olur)"] },
   point: { label: "Nokta", clicks: 1, hints: ["Noktayı yerleştirmek için tıklayın"] },
   fillet: { label: "Köşe Yuvarlatma", clicks: 1, hints: ["Yuvarlatılacak köşeye tıklayın (yarıçap Eskiz Paletinde)"] },
+  trim: { label: "Kırp", key: "K", clicks: 1, hints: ["Kesişimler arasında silinecek parçaya tıklayın (kesişimi olmayan eğri tamamen silinir)"] },
+  extend: { label: "Uzat", key: "U", clicks: 1, hints: ["Uzatılacak çizginin ucuna yakın bir yere tıklayın (en yakın kesişime kadar uzar)"] },
+  offset: {
+    label: "Ofset",
+    key: "O",
+    clicks: 1,
+    hints: [
+      "Ötelenecek eğriye tıklayın (bağlı eğriler birlikte ötelenir)",
+      "Yönü belirlemek için bir yere tıklayın · mesafe Eskiz Paletinde (0 ise imlecin uzaklığı) · Esc iptal",
+    ],
+  },
 };
+
+/** Tek tıklamayla bir eğriye uygulanan düzenleme araçları. */
+const CURVE_TOOLS = new Set<SketchTool>(["trim", "extend", "offset"]);
 
 /** Araç çubuğu ve komut kaydı için kısa erişim. */
 export const TOOL_LABELS = Object.fromEntries(Object.entries(TOOLS).map(([k, v]) => [k, v.label])) as Record<SketchTool, string>;
@@ -114,6 +132,8 @@ export interface SketchOptions {
   showConstraints: boolean;
   polygonSides: number;
   filletRadius: number;
+  /** Ofset mesafesi (mm); 0 ise tıklanan noktanın eğriye uzaklığı kullanılır. */
+  offsetDistance: number;
 }
 
 /** Ölçü kutusunda düzenlenen (henüz kaydedilmemiş ya da var olan) ölçü. */
@@ -185,6 +205,7 @@ export class Sketcher implements PointerHandler {
     showConstraints: true,
     polygonSides: 6,
     filletRadius: 2,
+    offsetDistance: 0,
   };
   /** Etkin eskizin düzlemi ve ofseti ("XY:0"); değişince görünüm yeniden kurulur. */
   private where = "";
@@ -523,9 +544,10 @@ export class Sketcher implements PointerHandler {
       return;
     }
     this.cursor = this.snap(e.clientX, e.clientY);
-    if (!this.tool) {
+    if (!this.tool || CURVE_TOOLS.has(this.tool)) {
       const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
-      const hovered = raw ? this.hit(raw) : null;
+      const source = this.tool === "offset" && this.pending.length ? this.pendingIds[0] : null;
+      const hovered = source ?? (raw ? (this.tool ? this.hitCurveOnly(raw) : this.hit(raw)) : null);
       if (hovered !== this.hovered) {
         this.hovered = hovered;
         this.syncViewOptions();
@@ -549,7 +571,16 @@ export class Sketcher implements PointerHandler {
     return hitPoint(d, raw, tol) ?? hitCurve(d, raw, tol);
   }
 
+  private hitCurveOnly(raw: Vec2): string | null {
+    return hitCurve(this.data(), raw, SNAP_PX * this.viewport.worldPerPixel());
+  }
+
   click(e: PointerEvent): void {
+    if (this.tool && CURVE_TOOLS.has(this.tool)) {
+      const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
+      if (raw) this.editCurveAt(this.tool, raw);
+      return;
+    }
     if (!this.tool) {
       const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
       this.selectItem(raw ? this.hit(raw) : null, e.ctrlKey || e.metaKey || e.shiftKey);
@@ -620,6 +651,87 @@ export class Sketcher implements PointerHandler {
     if (!buildTool(ed, tool, points, ids, this.options, this.options.construction)) return;
     this.resetPending();
     this.locked = {};
+    this.apply(ed);
+  }
+
+  /** Kırp / Uzat / Ofset: eskiz koordinatındaki `raw` noktasının altındaki eğriye uygulanır. */
+  editCurveAt(tool: SketchTool, raw: Vec2): void {
+    if (tool === "offset" && this.pending.length && this.pendingIds[0]) {
+      // İkinci tıklama: yön ve (mesafe 0 ise) uzaklık imlece göre belirlenir.
+      const ed = this.edit_();
+      try {
+        offsetCurves(ed, this.pendingIds[0], this.options.offsetDistance, raw);
+      } catch (e) {
+        this.reportError(e);
+        return;
+      }
+      this.resetPending();
+      this.hovered = null;
+      this.apply(ed);
+      return;
+    }
+    const id = this.hitCurveOnly(raw);
+    if (!id) return;
+    if (tool === "offset") {
+      this.pending = [raw];
+      this.pendingIds = [id];
+      this.hovered = id;
+      this.updatePreview();
+      this.onDidChange.fire();
+      return;
+    }
+    const ed = this.edit_();
+    try {
+      if (tool === "trim") trimCurve(ed, id, raw);
+      else if (tool === "extend") extendCurve(ed, id, raw);
+      else return;
+    } catch (e) {
+      this.reportError(e);
+      return;
+    }
+    this.hovered = null;
+    this.apply(ed);
+  }
+
+  private selectedCurves(what: string): string[] {
+    const ids = [...this.selected].filter((id) => id.startsWith("c"));
+    if (!ids.length) throw new Error(`${what} için önce öğe seçin (araç yokken tıklayın, Ctrl ile çoklu seçim)`);
+    return ids;
+  }
+
+  /** Seçili eğrileri (dx, dy) kadar taşır ya da kopyasını oraya koyar. */
+  moveSelected(dx: number, dy: number, copy: boolean): void {
+    const ids = this.selectedCurves(copy ? "Kopyalamak" : "Taşımak");
+    if (!dx && !dy) throw new Error("Taşıma miktarı sıfır");
+    const ed = this.edit_();
+    const map = translateBy(dx, dy);
+    if (copy) ed.copyCurves(ids, map);
+    else ed.transformCurves(ids, map);
+    this.apply(ed, !copy);
+  }
+
+  /** Seçili eğrileri (cx, cy) çevresinde `angle` derece (saat yönünün tersine) döndürür ya da kopyalar. */
+  rotateSelected(cx: number, cy: number, angle: number, copy: boolean): void {
+    const ids = this.selectedCurves("Döndürmek");
+    if (!angle) throw new Error("Döndürme açısı sıfır");
+    const ed = this.edit_();
+    const map = rotateAbout([cx, cy], angle);
+    if (copy) ed.copyCurves(ids, map);
+    else ed.transformCurves(ids, map);
+    this.apply(ed, !copy);
+  }
+
+  patternRectSelected(nx: number, ny: number, dx: number, dy: number): void {
+    const ids = this.selectedCurves("Desen için");
+    const ed = this.edit_();
+    patternRect(ed, ids, nx, ny, dx, dy);
+    this.apply(ed);
+  }
+
+  patternCircularSelected(count: number, angle: number, cx: number, cy: number): void {
+    const ids = this.selectedCurves("Desen için");
+    const ed = this.edit_();
+    patternCircular(ed, ids, count, angle, [cx, cy]);
     this.apply(ed);
   }
 
@@ -996,7 +1108,7 @@ export class Sketcher implements PointerHandler {
     const c = this.cursor ? this.constrain(this.cursor) : null;
     const p = this.pending;
     const tool = this.tool;
-    if (tool && tool !== "fillet" && p.length && c) {
+    if (tool && tool !== "fillet" && !CURVE_TOOLS.has(tool) && p.length && c) {
       const info = TOOLS[tool];
       const points = [...p, c];
       // Gerçek şekli boş bir eskize kurup parçalarını çizeriz: önizleme ile sonuç hep aynı olur.
@@ -1021,6 +1133,15 @@ export class Sketcher implements PointerHandler {
             segs.push(...previewSegments(circle));
           }
         }
+      }
+    }
+    if (tool === "offset" && p.length && c && this.pendingIds[0]) {
+      try {
+        const scratch = this.edit_();
+        const added = new Set(offsetCurves(scratch, this.pendingIds[0], this.options.offsetDistance, c));
+        for (const cu of scratch.d.curves) if (added.has(cu.id)) segs.push(...curveSegments(scratch.d, cu, scratch.pm));
+      } catch {
+        // Önizleme sessizce atlanır; hata ikinci tıklamada gösterilir.
       }
     }
     this.viewport.setPreview(segs, this.plane, this.offset, c ?? undefined);

@@ -68,6 +68,9 @@ const SKETCH_TOOL_ICONS: Record<SketchTool, string> = {
   spline: ICONS.spline,
   point: ICONS.point,
   fillet: ICONS.fillet,
+  trim: ICONS.trim,
+  extend: ICONS.extend,
+  offset: ICONS.offset,
   dimension: ICONS.dimension,
 };
 
@@ -330,6 +333,51 @@ export class Workbench {
     );
     c.register({ id: "sketch.mirrorV", title: "Dikey Eksende Aynala", category: "Eskiz" }, () => sk.mirrorSelected("V"));
     c.register({ id: "sketch.mirrorU", title: "Yatay Eksende Aynala", category: "Eskiz" }, () => sk.mirrorSelected("U"));
+    const ask = async (title: string, fields: InputField[]) => {
+      if (!sk.selected.size) throw new Error("Önce eskizde öğe seçin (araç yokken tıklayın, Ctrl ile çoklu seçim)");
+      return this.app.showInput({ title, fields });
+    };
+    const num = (name: string, label: string, value: number, extra: Partial<InputField> = {}): InputField => ({
+      name,
+      label,
+      type: "number",
+      value,
+      step: 1,
+      ...extra,
+    });
+    for (const copy of [false, true]) {
+      c.register({ id: copy ? "sketch.copy" : "sketch.move", title: copy ? "Kopyala (Ötele)" : "Taşı", category: "Eskiz" }, async () => {
+        const v = await ask(copy ? "Kopyala" : "Taşı", [num("dx", "X kaydırma (mm)", 10), num("dy", "Y kaydırma (mm)", 0)]);
+        if (v) sk.moveSelected(Number(v.dx), Number(v.dy), copy);
+      });
+    }
+    c.register({ id: "sketch.rotate", title: "Döndür", category: "Eskiz" }, async () => {
+      const v = await ask("Döndür", [
+        num("angle", "Açı (°, saat yönünün tersine)", 90, { min: -360, max: 360 }),
+        num("cx", "Merkez X (mm)", 0),
+        num("cy", "Merkez Y (mm)", 0),
+        num("copy", "Kopya bırak (1: evet, 0: hayır)", 0, { min: 0, max: 1 }),
+      ]);
+      if (v) sk.rotateSelected(Number(v.cx), Number(v.cy), Number(v.angle), Number(v.copy) === 1);
+    });
+    c.register({ id: "sketch.patternRect", title: "Dikdörtgensel Desen", category: "Eskiz" }, async () => {
+      const v = await ask("Dikdörtgensel Desen", [
+        num("nx", "X yönünde adet", 3, { min: 1, max: 100 }),
+        num("ny", "Y yönünde adet", 2, { min: 1, max: 100 }),
+        num("dx", "X aralığı (mm)", 10),
+        num("dy", "Y aralığı (mm)", 10),
+      ]);
+      if (v) sk.patternRectSelected(Math.round(Number(v.nx)), Math.round(Number(v.ny)), Number(v.dx), Number(v.dy));
+    });
+    c.register({ id: "sketch.patternCircular", title: "Dairesel Desen", category: "Eskiz" }, async () => {
+      const v = await ask("Dairesel Desen", [
+        num("count", "Adet (orijinal dahil)", 6, { min: 2, max: 200 }),
+        num("angle", "Toplam açı (°)", 360, { min: 1, max: 360 }),
+        num("cx", "Merkez X (mm)", 0),
+        num("cy", "Merkez Y (mm)", 0),
+      ]);
+      if (v) sk.patternCircularSelected(Math.round(Number(v.count)), Number(v.angle), Number(v.cx), Number(v.cy));
+    });
     c.register({ id: "sketch.deleteSelection", title: "Seçili Öğeleri Sil", category: "Eskiz" }, () => sk.deleteSelected());
   }
 
@@ -558,6 +606,11 @@ export class Workbench {
         buttons: [
           this.button("sketch.select", ICONS.select, { pressed: sk.tool === null, title: "Seç (Esc) — öğelere tıklayarak seçin" }),
           tool("fillet"),
+          tool("trim"),
+          tool("extend"),
+          tool("offset"),
+          this.button("sketch.move", ICONS.sketchMove, { disabled: !hasSel, title: "Taşı / Kopyala — seçili öğeleri" }),
+          this.button("sketch.rotate", ICONS.sketchRotate, { disabled: !hasSel, title: "Döndür / Kopyala — seçili öğeleri" }),
           this.button("sketch.construction", ICONS.construction, {
             pressed: sk.options.construction,
             title: "Yapı Çizgisi (X) — seçili öğeleri ya da yeni çizimleri yardımcı çizgi yapar",
@@ -568,6 +621,16 @@ export class Workbench {
         menu: [
           this.item("sketch.select", ICONS.select, { keybinding: "Esc" }),
           toolItem("fillet"),
+          toolItem("trim"),
+          toolItem("extend"),
+          toolItem("offset"),
+          { separator: true, label: "" },
+          this.item("sketch.move", ICONS.sketchMove, { disabled: !hasSel }),
+          this.item("sketch.copy", ICONS.sketchMove, { disabled: !hasSel }),
+          this.item("sketch.rotate", ICONS.sketchRotate, { disabled: !hasSel }),
+          this.item("sketch.patternRect", ICONS.sketchPatternRect, { disabled: !hasSel }),
+          this.item("sketch.patternCircular", ICONS.sketchPatternCircular, { disabled: !hasSel }),
+          { separator: true, label: "" },
           this.item("sketch.construction", ICONS.construction),
           this.item("sketch.mirrorV", ICONS.sketchMirror, { disabled: !hasSel }),
           this.item("sketch.mirrorU", ICONS.sketchMirror, { disabled: !hasSel }),
