@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import type { Solid } from "../../src/core/solid";
-import { buildRect, SketchEdit } from "../../src/core/sketchmodel";
 import { createApp, occ } from "./helpers";
 
 const BOX: Solid = { kind: "box", size: [40, 20, 10] };
