@@ -57,6 +57,9 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
   tıklayarak seçilir, değer girilip uygulanır. Sonuç parametriktir: yarıçap / mesafe / et kalınlığı sonradan
   Özellikler panelinden değişir; gövde ölçüsü değişse de seçilen kenarlar en yakın eşleşmeyle bulunur.
   Çekirdek (~23 MB wasm) uygulama açılırken değil, ilk kullanımda yüklenir; diğer işlemler hızlı manifold çekirdeğinde kalır
+- **Yüzeye Eskiz:** gövdenin düz bir yüzeyine tıklayınca o yüzeyin düzleminde eskiz açılır (yüzey vurgulanır).
+  Eskiz yüzeye bağlı değildir; gövde değişirse eskiz yerinde kalır. Birleştir / Kes ile çıkıntı ve cep açılır
+- **Açılı Yüzey:** OpenCascade ile seçili yüzlere kalıp açısı verir (çekme yönü ve nötr düzlem ayarlı)
 - **Delik** (`H`): gövde yüzeyine tıklayarak (birden çok konum seçilebilir) basit, silindirik havşalı ya da konik
   havşalı delik açar; derinlik 0 ise boydan boya. Konumlar ve ölçüler sonradan Özellikler panelinde değişir
 - **Boolean işlemleri:** Birleşim, Çıkarma, Kesişim (sonuç düzenlenebilir kalır)
@@ -172,8 +175,7 @@ exports.activate = (sugarcad) => {
 
 ## Yol haritası
 
-- Katı yüzeyine eskiz çizme
-- Açılı yüzey (draft), süpürme (sweep), loft ve kaburga (OpenCascade ile)
+- Süpürme (sweep), loft ve kaburga (OpenCascade ile)
 - Ekstrüzyonda "bir sonrakine kadar" seçeneği
 - Eklenti mağazası (indir / güncelle)
 - STEP / 3MF içe ve dışa aktarma

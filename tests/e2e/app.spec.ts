@@ -732,3 +732,105 @@ test("Delik: yüzeye tıkla, tür ve ölçü gir, uygula; özellikler panelinden
     .toBe(10);
   expect(errors).toEqual([]);
 });
+
+test("Yüzeye Eskiz: yüzeye tıkla, o düzlemde çiz, birleştirerek çek", async ({ page }) => {
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 20]);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+
+  // Yan yüze (x = 40) eskiz: yüz vurgulanır, tıklayınca o düzlemde eskiz açılır
+  await page.evaluate(() => (window as any).sugarcadUi.viewport.setView("right"));
+  await toolbar.getByRole("button", { name: "Yüzeye Eskiz" }).click();
+  const hud = page.getByRole("dialog", { name: "Yüzeye Eskiz" });
+  await expect(hud).toBeVisible();
+  const at = await page.evaluate(() => (window as any).sugarcadUi.viewport.screenOf([40, 10, 5]));
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.click(at.x, at.y);
+  await expect(hud).toBeHidden();
+  await expect(page.locator(".statusbar")).toContainText("Eskiz · Yüzey");
+  const frame = await page.evaluate(() => (window as any).sugarcad.document.all()[2].frame);
+  expect(frame).toEqual({ origin: [40, 0, 0], u: [0, 1, 0], v: [0, 0, 1], n: [1, 0, 0] });
+
+  // Kamera düzleme dik: u sağa, v yukarı gider
+  const o = await page.evaluate(() => { const ui = (window as any).sugarcadUi; return [ui.viewport.screenPoint(ui.sketcher.plane, 0, [0, 0]), ui.viewport.screenPoint(ui.sketcher.plane, 0, [5, 0]), ui.viewport.screenPoint(ui.sketcher.plane, 0, [0, 5])]; });
+  expect(o[1].x).toBeGreaterThan(o[0].x + 1);
+  expect(o[2].y).toBeLessThan(o[0].y - 1);
+
+  await page.keyboard.press("r");
+  await clickSketch(page, [4, 2]);
+  await clickSketch(page, [9, 7]);
+  await expect.poll(async () => (await sketchData(page, 2)).curves.length).toBe(4);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+
+  // Birleştirerek 4 mm dışarı çek
+  await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    app.document.setSelection([app.document.all()[2].id]);
+  });
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude", "sketch", "extrude"]);
+  await page.evaluate(async () => {
+    const app = (window as any).sugarcad;
+    const boss = app.document.all()[3];
+    await app.updateFeature(boss.id, { params: { distance: 4 } });
+    await app.setOperation(boss.id, "join");
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const app = (window as any).sugarcad;
+        return app.meshes.get(app.document.all()[3].id)?.volume ?? 0;
+      }),
+    )
+    .toBeCloseTo(8000 + 25 * 4, 1);
+  await page.screenshot({ path: `${S}/21-yuzeye-eskiz.png` });
+  expect(errors).toEqual([]);
+});
+
+test("Açılı Yüzey: yan yüzlere eğim ver", async ({ page }) => {
+  test.setTimeout(90_000);
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 20]);
+  await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
+  await page.keyboard.press("e");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+  await toolbar.getByRole("button", { name: "Açılı Yüzey", exact: true }).click();
+  const hud = page.getByRole("dialog", { name: "Açılı Yüzey" });
+  await expect(hud).toContainText("Eğim verilecek yüzlere tıklayın", { timeout: 60_000 });
+  // Gerçek tıklamayla bir yan yüz, geri kalanı programatik
+  const sides = await page.evaluate(() => {
+    const ui = (window as any).sugarcadUi;
+    return ui.brep.described.faces.map((f: any, i: number) => ({ i, n: f.ref.normal })).filter((f: any) => f.n && Math.abs(f.n[2]) < 0.1).map((f: any) => f.i);
+  });
+  expect(sides).toHaveLength(4);
+  await page.evaluate((ids) => ids.forEach((i: number) => (window as any).sugarcadUi.brep.toggle(i)), sides);
+  await expect(hud).toContainText("4 yüz seçili");
+  await hud.getByLabel("Değer").fill("5");
+  await hud.getByLabel("Çekme yönü").selectOption("+Z");
+  await hud.getByRole("button", { name: "Uygula" }).click();
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude", "draft"]);
+  const volume = () =>
+    page.evaluate(() => {
+      const app = (window as any).sugarcad;
+      return app.meshes.get(app.document.all()[2].id)?.volume ?? 0;
+    });
+  await expect.poll(volume).toBeGreaterThan(0);
+  const v = await volume();
+  expect(v).toBeGreaterThan(7000);
+  expect(v).toBeLessThan(8000);
+  await expect(page.getByLabel("Çekme yönü")).toHaveValue("+Z");
+  await page.screenshot({ path: `${S}/22-acili-yuzey.png` });
+  expect(errors).toEqual([]);
+});

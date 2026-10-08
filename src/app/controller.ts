@@ -23,7 +23,7 @@ import {
   type ParamSpec,
   type ParamValues,
 } from "../core/features";
-import { PLANES, type PlaneName } from "../core/sketch";
+import { PLANES, type PlaneRef } from "../core/sketch";
 import type { SketchSolver } from "../core/solver";
 import { emptySketch } from "../core/sketchmodel";
 import type { BooleanOp, EdgeRef, FaceRef, Solid, Vec3 } from "../core/solid";
@@ -172,13 +172,20 @@ export class SugarApp implements HostServices {
 
   // ---- eskiz tabanlı modelleme ----
 
-  /** Seçilen başlangıç düzleminde (isteğe bağlı ofsetle) boş bir eskiz açar. */
-  createSketch(plane: PlaneName, offset = 0): Feature {
-    if (!(plane in PLANES)) throw new Error(`Bilinmeyen düzlem: ${plane}`);
-    const feature = this.document.add(
-      { type: "sketch", plane, sketchData: emptySketch(), params: { offset: Number.isFinite(offset) ? offset : 0 } },
-      FEATURE_LABELS.sketch,
-    );
+  /** Seçilen başlangıç düzleminde ya da serbest bir düzlemde (örn. gövde yüzeyi) boş bir eskiz açar. */
+  createSketch(plane: PlaneRef, offset = 0): Feature {
+    const params = { offset: Number.isFinite(offset) ? offset : 0 };
+    let placement: Pick<Feature, "plane" | "frame">;
+    if (typeof plane === "string") {
+      if (!(plane in PLANES)) throw new Error(`Bilinmeyen düzlem: ${plane}`);
+      placement = { plane };
+    } else {
+      const ok = [plane.origin, plane.u, plane.v, plane.n].every((v) => v.length === 3 && v.every(Number.isFinite));
+      if (!ok) throw new Error("Geçersiz eskiz düzlemi");
+      // `plane` eskiz özelliğinin işaretidir; çerçeve varsa onun yerine geçer.
+      placement = { plane: "XY", frame: structuredClone(plane) };
+    }
+    const feature = this.document.add({ type: "sketch", ...placement, sketchData: emptySketch(), params }, FEATURE_LABELS.sketch);
     this.document.setSelection([feature.id]);
     return feature;
   }
@@ -265,17 +272,24 @@ export class SugarApp implements HostServices {
   }
 
   /** Seçilen kenarları yuvarlatır / pah kırar, ya da seçilen yüzleri açarak gövdeyi oyar. */
-  addBrepFeature(type: BrepFeatureType, sourceId: string, refs: { edges?: EdgeRef[]; faces?: FaceRef[] }, value?: number): Feature {
+  addBrepFeature(type: BrepFeatureType, sourceId: string, refs: { edges?: EdgeRef[]; faces?: FaceRef[] }, value?: number, extra: { pull?: Vec3 } = {}): Feature {
     const source = this.document.get(sourceId);
     if (!source || !isSolidFeature(source)) throw new Error(`${BREP_LABELS[type]} için gövde bulunamadı`);
-    if (type === "shell" ? !refs.faces?.length : !refs.edges?.length) {
-      throw new Error(type === "shell" ? "Açılacak en az bir yüz seçin" : "En az bir kenar seçin");
+    const onFaces = type === "shell" || type === "draft";
+    if (onFaces ? !refs.faces?.length : !refs.edges?.length) {
+      throw new Error(type === "shell" ? "Açılacak en az bir yüz seçin" : onFaces ? "En az bir yüz seçin" : "En az bir kenar seçin");
     }
     const params = Object.fromEntries(Object.entries(FEATURE_PARAMS[type]).map(([k, spec]) => [k, spec.default]));
     const key = Object.keys(params)[0];
     if (value !== undefined) params[key] = clampParam(FEATURE_PARAMS[type][key], value);
     const feature = this.document.add(
-      { type, source: sourceId, params, ...(type === "shell" ? { faces: refs.faces } : { edges: refs.edges }) },
+      {
+        type,
+        source: sourceId,
+        params,
+        ...(onFaces ? { faces: refs.faces } : { edges: refs.edges }),
+        ...(type === "draft" && extra.pull ? { pull: extra.pull } : {}),
+      },
       BREP_LABELS[type],
     );
     this.document.setSelection([feature.id]);
@@ -364,7 +378,7 @@ export class SugarApp implements HostServices {
         type: f.type,
         params: f.params,
         ...(f.solid ? { solid: f.solid } : {}),
-        ...(f.plane ? { plane: f.plane, sketchData: sketchDataOf(f) } : {}),
+        ...(f.plane ? { plane: f.plane, ...(f.frame ? { frame: f.frame } : {}), sketchData: sketchDataOf(f) } : {}),
         position: [f.position[0] + 10, f.position[1] + 10, f.position[2]],
         rotation: f.rotation,
         name: `${f.name} kopya`,

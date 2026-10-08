@@ -69,6 +69,22 @@ describe("B-rep özellikleri (uygulama düzeyi)", () => {
     expect(app2.meshes.get(sh.id)!.volume).toBeCloseTo(800 * 10 - 37 * 17 * 8.5, 1);
   });
 
+  it("açılı yüzey: yan yüzleri seç, 4° ver; açı ve çekme yönü parametrik", async () => {
+    const { app, extrude } = await body();
+    const info = await app.describeBody(extrude.id);
+    const sides = info.faces.filter((f) => f.ref.normal && Math.abs(f.ref.normal[2]) < 0.1).map((f) => f.ref);
+    expect(sides).toHaveLength(4);
+    const f = app.addBrepFeature("draft", extrude.id, { faces: sides }, 4);
+    expect(app.errors.get(f.id)).toBeUndefined();
+    const v4 = app.meshes.get(f.id)!.volume;
+    expect(v4).toBeLessThan(8000);
+    await app.updateFeature(f.id, { params: { angle: 8 } });
+    expect(app.meshes.get(f.id)!.volume).toBeLessThan(v4);
+    await app.updateFeature(f.id, { pull: [0, 0, -1] });
+    expect(app.errors.get(f.id)).toBeUndefined();
+    expect(() => app.addBrepFeature("draft", f.id, { faces: [] })).toThrow(/en az bir yüz/i);
+  });
+
   it("hatalar anlaşılır: kenar seçilmemiş, yarıçap çok büyük", async () => {
     const { app, extrude } = await body();
     expect(() => app.addBrepFeature("fillet", extrude.id, { edges: [] })).toThrow(/en az bir kenar/i);

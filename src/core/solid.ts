@@ -55,7 +55,9 @@ export type Solid =
   /** B-rep işlemleri (yalnızca OpenCascade çekirdeği): seçili kenarları yuvarlatır / pah kırar, seçili yüzleri açıp içini oyar. */
   | { kind: "fillet"; child: Solid; radius: number; edges: EdgeRef[] }
   | { kind: "chamfer"; child: Solid; distance: number; edges: EdgeRef[] }
-  | { kind: "shell"; child: Solid; thickness: number; faces: FaceRef[] };
+  | { kind: "shell"; child: Solid; thickness: number; faces: FaceRef[] }
+  /** Seçili yüzlere `angle` derece eğim verir; `pull` çekme yönüdür, nötr düzlem gövdenin çekme yönündeki en alt noktasından `neutral` kadar yukarıdadır. */
+  | { kind: "draft"; child: Solid; angle: number; faces: FaceRef[]; pull: Vec3; neutral?: number };
 
 /** Bu tarif (ya da altındaki bir dal) OpenCascade gerektiriyor mu? */
 export function needsBrep(solid: Solid): boolean {
@@ -63,6 +65,7 @@ export function needsBrep(solid: Solid): boolean {
     case "fillet":
     case "chamfer":
     case "shell":
+    case "draft":
       return true;
     case "boolean":
       return solid.children.some(needsBrep);
@@ -172,6 +175,13 @@ export function validateSolid(value: unknown, path = "solid", depth = 0): Solid 
     }
     case "shell":
       if (!isNum(s.thickness) || s.thickness <= 0) throw new Error(`${path}.thickness: pozitif olmalı`);
+      validateRefs(s.faces, `${path}.faces`, (r) => isVec(r.center, 3) && typeof r.kind === "string");
+      validateSolid(s.child, `${path}.child`, depth + 1);
+      return s as unknown as Solid;
+    case "draft":
+      if (!isNum(s.angle) || s.angle === 0 || Math.abs(s.angle) >= 89) throw new Error(`${path}.angle: sıfırdan farklı ve 89° altında olmalı`);
+      if (!isVec(s.pull, 3) || !(s.pull as number[]).some((n) => n !== 0)) throw new Error(`${path}.pull: sıfırdan farklı [x, y, z] olmalı`);
+      if (s.neutral !== undefined && !isNum(s.neutral)) throw new Error(`${path}.neutral: sayı olmalı`);
       validateRefs(s.faces, `${path}.faces`, (r) => isVec(r.center, 3) && typeof r.kind === "string");
       validateSolid(s.child, `${path}.child`, depth + 1);
       return s as unknown as Solid;

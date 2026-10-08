@@ -89,6 +89,7 @@ export class SolidEvaluator {
       case "fillet":
       case "chamfer":
       case "shell":
+      case "draft":
         // Bu tarifler session tarafından OpenCascade işçisine yönlendirilir; buraya gelmemeli.
         throw new Error("Yuvarlatma / pah / kabuk için OpenCascade çekirdeği gerekir");
     }

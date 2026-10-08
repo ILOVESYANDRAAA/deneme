@@ -17,6 +17,52 @@ export const PLANES: Record<PlaneName, PlaneInfo> = {
   YZ: { label: "YZ (Sağ)", u: [0, 1, 0], v: [0, 0, 1], n: [1, 0, 0] },
 };
 
+/** Serbest eskiz düzlemi (örn. bir gövde yüzeyi): başlangıç noktası ve (u, v, n) eksenleri. u × v = n. */
+export interface PlaneFrame {
+  origin: Vec3;
+  u: Vec3;
+  v: Vec3;
+  n: Vec3;
+}
+
+/** Eskizin üzerinde durduğu düzlem: başlangıç düzlemlerinden biri ya da serbest çerçeve. */
+export type PlaneRef = PlaneName | PlaneFrame;
+
+const cross3 = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const unit3 = (a: Vec3): Vec3 => {
+  const l = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0] / l, a[1] / l, a[2] / l];
+};
+
+/** Düzlemin başlangıç noktası ve eksenleri. */
+export function frameOf(ref: PlaneRef): PlaneFrame {
+  if (typeof ref !== "string") return ref;
+  return { origin: [0, 0, 0], ...PLANES[ref] };
+}
+
+export function planeLabel(ref: PlaneRef): string {
+  return typeof ref === "string" ? PLANES[ref].label : "Yüzey";
+}
+
+/** İki düzlemin aynı olup olmadığını (eskiz yeniden kurulsun mu?) anlamak için kısa anahtar. */
+export function planeKey(ref: PlaneRef): string {
+  return typeof ref === "string" ? ref : JSON.stringify(ref);
+}
+
+/**
+ * Yüzey noktası ve dışa bakan normalden eskiz çerçevesi: başlangıç noktası, dünya başlangıcının düzleme
+ * izdüşümüdür (üst yüzde eskiz orijini dünya orijininin üstünde kalır); u yatay, v "yukarı" bakar.
+ */
+export function frameFromFace(point: Vec3, normal: Vec3): PlaneFrame {
+  const n = unit3(normal);
+  const d = n[0] * point[0] + n[1] * point[1] + n[2] * point[2];
+  const round = (v: Vec3): Vec3 => v.map((x) => Math.round(x * 1e6) / 1e6 + 0) as Vec3;
+  const origin: Vec3 = [n[0] * d, n[1] * d, n[2] * d];
+  const u = Math.abs(n[2]) > 0.999 ? ([1, 0, 0] as Vec3) : unit3(cross3([0, 0, 1], n));
+  const v = cross3(n, u);
+  return { origin: round(origin), u: round(u), v: round(v), n: round(n) };
+}
+
 export function isPlaneName(value: unknown): value is PlaneName {
   return value === "XY" || value === "XZ" || value === "YZ";
 }
@@ -45,14 +91,14 @@ export type SketchEntityKind = SketchEntity["kind"];
 export const CIRCLE_SEGMENTS = 96;
 
 /** Eskizin yerel (u, v, n) koordinatlarını dünyaya taşıyan 4×4 matris (sütun öncelikli). */
-export function planeMatrix(plane: PlaneName, offset = 0): number[] {
-  const { u, v, n } = PLANES[plane];
-  return [...u, 0, ...v, 0, ...n, 0, n[0] * offset, n[1] * offset, n[2] * offset, 1];
+export function planeMatrix(plane: PlaneRef, offset = 0): number[] {
+  const { origin, u, v, n } = frameOf(plane);
+  return [...u, 0, ...v, 0, ...n, 0, origin[0] + n[0] * offset, origin[1] + n[1] * offset, origin[2] + n[2] * offset, 1];
 }
 
-export function toWorld(plane: PlaneName, offset: number, [a, b]: Vec2): Vec3 {
-  const { u, v, n } = PLANES[plane];
-  return [0, 1, 2].map((i) => u[i] * a + v[i] * b + n[i] * offset) as Vec3;
+export function toWorld(plane: PlaneRef, offset: number, [a, b]: Vec2): Vec3 {
+  const { origin, u, v, n } = frameOf(plane);
+  return [0, 1, 2].map((i) => origin[i] + u[i] * a + v[i] * b + n[i] * offset) as Vec3;
 }
 
 // ---- küçük 2B yardımcılar ----

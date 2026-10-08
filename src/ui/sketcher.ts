@@ -1,7 +1,7 @@
 import type { SugarApp } from "../app/controller";
 import { Emitter } from "../core/events";
 import { sketchDataOf, type Feature } from "../core/features";
-import { PLANES, dist, niceStep, perp, roundPoint, snapToGrid, type PlaneName } from "../core/sketch";
+import { dist, niceStep, perp, planeKey, planeLabel, roundPoint, snapToGrid, type PlaneName, type PlaneRef } from "../core/sketch";
 import { planConstraint, planDimension, type DimensionChoice } from "../core/constrain";
 import {
   CONSTRAINT_LABELS,
@@ -227,11 +227,11 @@ export class Sketcher implements PointerHandler {
       this.hovered = null;
       this.refreshSolveInfo();
       // Düzlem ya da ofset değiştiyse kamera ve ızgara yeni düzleme geçsin.
-      const where = `${f.plane}:${f.params.offset ?? 0}`;
+      const where = `${planeKey(f.frame ?? f.plane)}:${f.params.offset ?? 0}`;
       if (where !== this.where) {
         this.where = where;
         this.resetPending();
-        this.viewport.enterSketch(f.id, f.plane, f.params.offset ?? 0);
+        this.viewport.enterSketch(f.id, f.frame ?? f.plane, f.params.offset ?? 0);
       }
       this.updatePreview();
       this.onDidChange.fire();
@@ -266,8 +266,9 @@ export class Sketcher implements PointerHandler {
     this.solveInfo = { dof: r.dof, conflicting: r.conflicting, redundant: r.redundant, solved: true };
   }
 
-  get plane(): PlaneName {
-    return this.sketch()?.plane ?? "XY";
+  get plane(): PlaneRef {
+    const f = this.sketch();
+    return f?.frame ?? f?.plane ?? "XY";
   }
 
   private get offset(): number {
@@ -303,8 +304,8 @@ export class Sketcher implements PointerHandler {
     this.locked = {};
     this.selected.clear();
     this.tool = this.tool ?? "line";
-    this.where = `${f.plane}:${f.params.offset ?? 0}`;
-    this.viewport.enterSketch(id, f.plane, f.params.offset ?? 0);
+    this.where = `${planeKey(f.frame ?? f.plane)}:${f.params.offset ?? 0}`;
+    this.viewport.enterSketch(id, f.frame ?? f.plane, f.params.offset ?? 0);
     this.viewport.setInteraction(this);
     this.refreshSolveInfo();
     this.syncViewOptions();
@@ -1150,7 +1151,7 @@ export class Sketcher implements PointerHandler {
   /** Durum çubuğu için açıklama. */
   statusText(): string {
     if (!this.isActive) return "";
-    const plane = PLANES[this.plane].label;
+    const plane = planeLabel(this.plane);
     let text: string;
     if (this.tool) {
       const info = TOOLS[this.tool];

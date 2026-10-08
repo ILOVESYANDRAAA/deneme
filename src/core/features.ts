@@ -1,4 +1,4 @@
-import { PLANES, planeMatrix, type PlaneName, type SketchEntity } from "./sketch";
+import { PLANES, planeMatrix, type PlaneFrame, type PlaneName, type SketchEntity } from "./sketch";
 import { fromLegacyEntities, sketchDataLoops, sketchDataProfiles, type SketchData } from "./sketchmodel";
 import type { BooleanOp, EdgeRef, FaceRef, Loop, Solid, Vec2, Vec3 } from "./solid";
 
@@ -29,6 +29,8 @@ export interface Feature {
   operands?: [string, string];
   /** Eskiz: düzlem ve geometri (noktalar, eğriler, kısıtlar). */
   plane?: PlaneName;
+  /** Eskiz bir gövde yüzeyinde (ya da serbest düzlemde) ise düzlem çerçevesi; varsa `plane`ın yerine geçer. */
+  frame?: PlaneFrame;
   sketchData?: SketchData;
   /** Eski (v1) dosyalardaki eskiz öğeleri; açılırken `sketchData`'ya çevrilir. */
   entities?: SketchEntity[];
@@ -52,6 +54,8 @@ export interface Feature {
   /** Delik: türü ve konumları (yüzey noktası + dışa bakan yüzey normali). Kaynak gövdeden çıkarılır. */
   holeType?: HoleType;
   holes?: HolePoint[];
+  /** Açılı yüzey: çekme yönü (varsayılan +Z). */
+  pull?: Vec3;
   /** Sadece 3D görünümde gizlenir; hesaplama ve dışa aktarma etkilenmez. */
   hidden?: boolean;
   /** Eklenti özellikleri için son üretilen tarif (eklenti yüklü olmasa da dosya açılabilsin diye saklanır). */
@@ -135,14 +139,30 @@ export function visibleParams(f: Pick<Feature, "type" | "holeType">): string[] |
 }
 
 /** Kaynak gövdenin kenarlarını / yüzlerini değiştiren B-rep özellikleri (OpenCascade çekirdeği gerekir). */
-export const BREP_FEATURES = ["fillet", "chamfer", "shell"] as const;
+export const BREP_FEATURES = ["fillet", "chamfer", "shell", "draft"] as const;
 export type BrepFeatureType = (typeof BREP_FEATURES)[number];
 
 export const BREP_LABELS: Record<BrepFeatureType, string> = {
   fillet: "Yuvarlatma",
   chamfer: "Pah",
   shell: "Kabuk",
+  draft: "Açılı Yüzey",
 };
+
+/** Açılı yüzeyin çekme yönü seçenekleri. */
+export const PULL_DIRECTIONS: Record<string, { label: string; dir: Vec3 }> = {
+  "+Z": { label: "Yukarı (+Z)", dir: [0, 0, 1] },
+  "-Z": { label: "Aşağı (−Z)", dir: [0, 0, -1] },
+  "+X": { label: "+X", dir: [1, 0, 0] },
+  "-X": { label: "−X", dir: [-1, 0, 0] },
+  "+Y": { label: "+Y", dir: [0, 1, 0] },
+  "-Y": { label: "−Y", dir: [0, -1, 0] },
+};
+
+export function pullKey(dir: Vec3 | undefined): string {
+  const d = dir ?? [0, 0, 1];
+  return Object.entries(PULL_DIRECTIONS).find(([, v]) => v.dir.every((n, i) => n === d[i]))?.[0] ?? "+Z";
+}
 
 export function isBrepFeature(type: string): type is BrepFeatureType {
   return (BREP_FEATURES as readonly string[]).includes(type);
@@ -182,6 +202,10 @@ export const FEATURE_PARAMS: Record<string, Record<string, ParamSpec>> = {
   fillet: { radius: { label: "Yarıçap", default: 2, min: 0.001, step: 0.5 } },
   chamfer: { distance: { label: "Mesafe", default: 2, min: 0.001, step: 0.5 } },
   shell: { thickness: { label: "Et kalınlığı", default: 2, min: 0.001, step: 0.5 } },
+  draft: {
+    angle: { label: "Açı (°)", default: 3, min: -45, max: 45, step: 0.5 },
+    neutral: { label: "Nötr düzlem konumu (alttan)", default: 0, step: 1 },
+  },
 };
 
 /** Bu özelliğin girdi olarak kullandığı (tükettiği) diğer özellikler. */
@@ -457,6 +481,11 @@ function brepFeatureSolid(feature: Feature, child: Solid): Solid {
         ? { kind: "fillet", child, radius: value, edges: feature.edges }
         : { kind: "chamfer", child, distance: value, edges: feature.edges };
     }
+    case "draft": {
+      if (!feature.faces?.length) throw new Error(`${feature.name}: eğim verilecek yüz seçilmemiş`);
+      if (!p.angle) throw new Error(`${feature.name}: açı sıfır olamaz`);
+      return { kind: "draft", child, angle: p.angle, faces: feature.faces, pull: feature.pull ?? [0, 0, 1], neutral: p.neutral ?? 0 };
+    }
     case "shell": {
       if (!feature.faces?.length) throw new Error(`${feature.name}: açılacak yüz seçilmemiş`);
       if (!(p.thickness > 0)) throw new Error(`${feature.name}: et kalınlığı pozitif olmalı`);
@@ -536,5 +565,5 @@ function sketchFeatureSolid(feature: Feature, byId: Map<string, Feature>): Solid
       child: { kind: "revolve", polygons: polys, angle: feature.params.angle ?? 360, segments: 96, fillRule: "EvenOdd", loops: exact },
     };
   }
-  return { kind: "transform", matrix: planeMatrix(plane, sketch.params.offset ?? 0), child: local };
+  return { kind: "transform", matrix: planeMatrix(sketch.frame ?? plane, sketch.params.offset ?? 0), child: local };
 }

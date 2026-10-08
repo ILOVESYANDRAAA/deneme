@@ -3,7 +3,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { SugarApp } from "../app/controller";
 import { Emitter } from "../core/events";
 import { sketchDataOf } from "../core/features";
-import { PLANES, profileRegions, toWorld, type PlaneName } from "../core/sketch";
+import { PLANES, frameOf, profileRegions, toWorld, type PlaneName, type PlaneRef } from "../core/sketch";
 import { curvePoints, curveSegments, pointMap, sketchDataProfiles, type SketchData } from "../core/sketchmodel";
 import type { Vec2, Vec3 } from "../core/solid";
 import type { MeshData } from "../geometry/evaluate";
@@ -343,7 +343,7 @@ export class Viewport {
   }
 
   /** Gövde yüzeyindeki noktayı, yüzeyin dışa bakan normalini ve gövdenin özellik kimliğini döndürür (delik yerleştirme için). */
-  pickSurface(clientX: number, clientY: number, only?: string): { point: Vec3; normal: Vec3; featureId: string } | null {
+  pickSurface(clientX: number, clientY: number, only?: string): { point: Vec3; normal: Vec3; featureId: string; faceIndex: number } | null {
     this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
     const meshes = this.visibleMeshes().filter((m) => !only || m.userData.featureId === only);
     const hit = this.raycaster.intersectObjects(meshes, false).find((h) => this.unclipped(h.point));
@@ -354,6 +354,7 @@ export class Viewport {
       point: [r(hit.point.x), r(hit.point.y), r(hit.point.z)],
       normal: [r(normal.x), r(normal.y), r(normal.z)],
       featureId: hit.object.userData.featureId as string,
+      faceIndex: hit.faceIndex ?? 0,
     };
   }
 
@@ -393,12 +394,14 @@ export class Viewport {
   }
 
   /** Ekran noktasının eskiz düzlemindeki (u, v) karşılığı. */
-  planePoint(clientX: number, clientY: number, plane: PlaneName, offset: number): Vec2 | null {
-    const { u, v, n } = PLANES[plane];
+  planePoint(clientX: number, clientY: number, plane: PlaneRef, offset: number): Vec2 | null {
+    const { origin, u, v, n } = frameOf(plane);
     const normal = new THREE.Vector3(...n);
+    const o = new THREE.Vector3(...origin);
     this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
-    const hit = this.raycaster.ray.intersectPlane(new THREE.Plane(normal, -offset), new THREE.Vector3());
+    const hit = this.raycaster.ray.intersectPlane(new THREE.Plane(normal, -(normal.dot(o) + offset)), new THREE.Vector3());
     if (!hit) return null;
+    hit.sub(o);
     return [hit.dot(new THREE.Vector3(...u)), hit.dot(new THREE.Vector3(...v))];
   }
 
@@ -410,7 +413,7 @@ export class Viewport {
   }
 
   /** Eskiz düzlemindeki noktanın ekran konumu (testler ve yakalama için). */
-  screenPoint(plane: PlaneName, offset: number, p: Vec2): { x: number; y: number } {
+  screenPoint(plane: PlaneRef, offset: number, p: Vec2): { x: number; y: number } {
     return this.screenOf(toWorld(plane, offset, p));
   }
 
@@ -532,25 +535,37 @@ export class Viewport {
   // ---- eskiz modu ----
 
   /** Eskiz moduna geçer: kamera düzleme dik bakar, sol tık döndürmek yerine çizer. */
-  enterSketch(id: string, plane: PlaneName, offset: number): void {
+  enterSketch(id: string, plane: PlaneRef, offset: number): void {
     this.activeSketch = id;
     this.controls.enableRotate = false;
-    const { u, v, n } = PLANES[plane];
+    const { origin, u, v, n } = frameOf(plane);
     // GridHelper kendi XZ düzleminde durur: X → u, Z → v, Y → n
     this.sketchGrid.matrixAutoUpdate = false;
     this.sketchGrid.matrix
       .makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...n), new THREE.Vector3(...v))
-      .setPosition(new THREE.Vector3(...n).multiplyScalar(offset));
+      .setPosition(new THREE.Vector3(...origin).addScaledVector(new THREE.Vector3(...n), offset));
     this.sketchGrid.visible = this.sketchOptions.grid;
     // Eskizde zemin ızgarası yerine eskiz ızgarası görünür (Fusion'daki gibi).
     this.ground.visible = false;
-    this.setView(PLANE_VIEWS[plane]);
+    if (typeof plane === "string") this.setView(PLANE_VIEWS[plane]);
+    else this.lookAlong(n, v);
     this.refreshSketches();
+  }
+
+  /** Kamerayı `dir` yönünden (hedeften kameraya) düzleme dik baktırır; `up` ekranın yukarısıdır. */
+  private lookAlong(dir: Vec3, up: Vec3): void {
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    this.camera.up.set(...up);
+    this.camera.position.copy(this.controls.target).addScaledVector(new THREE.Vector3(...dir).normalize(), distance);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
+    this.fit();
   }
 
   exitSketch(): void {
     this.activeSketch = null;
     this.controls.enableRotate = true;
+    this.camera.up.set(0, 0, 1);
     this.sketchGrid.visible = false;
     this.ground.visible = this.gridVisible;
     this.highlight = { selected: new Set(), hovered: null };
@@ -584,7 +599,7 @@ export class Viewport {
   }
 
   /** Çizim sırasında geçici çizgiler ve imleç işareti. */
-  setPreview(segments: [Vec2, Vec2][], plane: PlaneName, offset: number, marker?: Vec2): void {
+  setPreview(segments: [Vec2, Vec2][], plane: PlaneRef, offset: number, marker?: Vec2): void {
     const pts: number[] = [];
     const push = (p: Vec2) => pts.push(...toWorld(plane, offset, p));
     for (const [a, b] of segments) {
@@ -620,6 +635,7 @@ export class Viewport {
     const selected = new Set(doc.getSelection());
     for (const f of doc.all()) {
       if (f.type !== "sketch" || !f.plane) continue;
+      const plane: PlaneRef = f.frame ?? f.plane;
       const active = f.id === this.activeSketch;
       const free = !doc.parentOf(f.id);
       if (!active && !selected.has(f.id) && (!free || f.hidden)) continue;
@@ -644,7 +660,7 @@ export class Viewport {
       }
       for (const g of groups.values()) {
         const pts: number[] = [];
-        for (const [a, b] of g.segs) pts.push(...toWorld(f.plane, offset, a), ...toWorld(f.plane, offset, b));
+        for (const [a, b] of g.segs) pts.push(...toWorld(plane, offset, a), ...toWorld(plane, offset, b));
         if (!pts.length) continue;
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
@@ -658,16 +674,16 @@ export class Viewport {
         line.userData.featureId = f.id;
         this.sketchGroup.add(line);
       }
-      if (active) this.addSketchPoints(f.plane, offset, data);
+      if (active) this.addSketchPoints(plane, offset, data);
       // Kapalı bölgeler hafifçe boyanır: neyin katıya çevrilebileceği görünsün.
-      if ((active && this.sketchOptions.profiles) || (!active && free)) this.addProfileFill(f.plane, offset, data, active);
+      if ((active && this.sketchOptions.profiles) || (!active && free)) this.addProfileFill(plane, offset, data, active);
     }
     this.updateHint();
     this.requestRender();
   }
 
   /** Etkin eskizin uç ve merkez noktaları: seçili olanlar vurgulanır, sabitler ayrı renkte. */
-  private addSketchPoints(plane: PlaneName, offset: number, data: SketchData): void {
+  private addSketchPoints(plane: PlaneRef, offset: number, data: SketchData): void {
     const used = new Set(data.curves.flatMap(curvePoints));
     const fixed = new Set(data.constraints.filter((k) => k.type === "fix").map((k) => k.refs[0]));
     const buckets = new Map<string, { color: string; size: number; pts: number[] }>();
@@ -691,7 +707,7 @@ export class Viewport {
     }
   }
 
-  private addProfileFill(plane: PlaneName, offset: number, data: SketchData, active: boolean): void {
+  private addProfileFill(plane: PlaneRef, offset: number, data: SketchData, active: boolean): void {
     const regions = profileRegions(sketchDataProfiles(data));
     if (!regions.length) return;
     const shapes = regions.map(({ outer, holes }) => {
@@ -700,10 +716,10 @@ export class Viewport {
       return shape;
     });
     const geometry = new THREE.ShapeGeometry(shapes);
-    const { u, v, n } = PLANES[plane];
+    const { origin, u, v, n } = frameOf(plane);
     const m = new THREE.Matrix4()
       .makeBasis(new THREE.Vector3(...u), new THREE.Vector3(...v), new THREE.Vector3(...n))
-      .setPosition(new THREE.Vector3(...n).multiplyScalar(offset));
+      .setPosition(new THREE.Vector3(...origin).addScaledVector(new THREE.Vector3(...n), offset));
     geometry.applyMatrix4(m);
     const fill = new THREE.Mesh(
       geometry,

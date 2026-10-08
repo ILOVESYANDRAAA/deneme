@@ -1,5 +1,7 @@
 import {
+  cast,
   draw,
+  getOC,
   drawCircle,
   makeBaseBox,
   makeCylinder,
@@ -195,6 +197,36 @@ export function resolveFaces(shape: Shape3D, refs: FaceRef[]): Face[] {
   return found;
 }
 
+/**
+ * Seçili yüzlere eğim verir. Nötr düzlem, gövdenin çekme yönündeki en alt noktasından `neutral` kadar
+ * ilerdedir; yüzler bu düzlemden uzaklaştıkça eğimle içeri (pozitif açı) ya da dışarı (negatif) kayar.
+ */
+function draftFaces(shape: Shape3D, faces: Face[], angle: number, pull: Vec3, neutral: number): Shape3D {
+  const oc = getOC();
+  const dir = unit(pull);
+  const [lo, hi] = boundsOf(shape);
+  let minAlong = Infinity;
+  for (const x of [lo[0], hi[0]]) for (const y of [lo[1], hi[1]]) for (const z of [lo[2], hi[2]]) minAlong = Math.min(minAlong, dot3([x, y, z], dir));
+  const at = neutral + minAlong;
+  const gDir = new oc.gp_Dir(dir[0], dir[1], dir[2]);
+  const gPnt = new oc.gp_Pnt(dir[0] * at, dir[1] * at, dir[2] * at);
+  const plane = new oc.gp_Pln(gPnt, gDir);
+  const maker = new oc.BRepOffsetAPI_DraftAngle(shape.wrapped);
+  try {
+    for (const face of faces) {
+      maker.Add(face.wrapped, gDir, (angle * Math.PI) / 180, plane, true);
+      if (!maker.AddDone()) throw new Error("Bir yüze eğim verilemedi");
+    }
+    maker.Build();
+    if (!maker.IsDone()) throw new Error("Eğim uygulanamadı");
+    return cast(maker.Shape()) as Shape3D;
+  } catch (e) {
+    throw new Error("Açılı yüzey uygulanamadı: açı çok büyük olabilir ya da seçilen yüzler çekme yönüne uygun değil", { cause: e });
+  } finally {
+    for (const o of [maker, plane, gPnt, gDir]) o.delete();
+  }
+}
+
 // ---- değerlendirici ----
 
 /**
@@ -294,6 +326,11 @@ export class OccEvaluator {
           const what = solid.kind === "fillet" ? "Yuvarlatma" : "Pah";
           throw new Error(`${what} uygulanamadı: ${solid.kind === "fillet" ? "yarıçap" : "mesafe"} çok büyük olabilir ya da kenarlar uygun değil`, { cause: e });
         }
+      }
+      case "draft": {
+        const child = this.evaluate(solid.child);
+        const faces = resolveFaces(child, solid.faces);
+        return draftFaces(child, faces, solid.angle, solid.pull, solid.neutral ?? 0);
       }
       case "shell": {
         const child = this.evaluate(solid.child);

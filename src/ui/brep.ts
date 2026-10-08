@@ -3,7 +3,7 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { SugarApp } from "../app/controller";
-import { BREP_LABELS, type BrepFeatureType } from "../core/features";
+import { BREP_LABELS, PULL_DIRECTIONS, type BrepFeatureType } from "../core/features";
 import type { Vec3 } from "../core/solid";
 import type { BrepInfo } from "../geometry/brep";
 import { formatNumber, h } from "./dom";
@@ -11,13 +11,14 @@ import { ICONS } from "./icons";
 import { hudBox } from "./inspect";
 import type { PointerHandler, Viewport } from "./viewport";
 
-const VALUE_LABELS: Record<BrepFeatureType, string> = { fillet: "Yarıçap (mm)", chamfer: "Mesafe (mm)", shell: "Et kalınlığı (mm)" };
+const VALUE_LABELS: Record<BrepFeatureType, string> = { fillet: "Yarıçap (mm)", chamfer: "Mesafe (mm)", shell: "Et kalınlığı (mm)", draft: "Açı (°)" };
 const HINTS: Record<BrepFeatureType, string> = {
   fillet: "Yuvarlatılacak kenarlara tıklayın (tekrar tıklamak seçimi kaldırır)",
   chamfer: "Pah kırılacak kenarlara tıklayın (tekrar tıklamak seçimi kaldırır)",
   shell: "Açılacak (kaldırılacak) yüzlere tıklayın; gövdenin içi oyulur",
+  draft: "Eğim verilecek yüzlere tıklayın (genelde yan yüzler); nötr düzlem gövdenin altındadır",
 };
-const ICON_OF: Record<BrepFeatureType, string> = { fillet: ICONS.fillet, chamfer: ICONS.chamfer, shell: ICONS.shell };
+const ICON_OF: Record<BrepFeatureType, string> = { fillet: ICONS.fillet, chamfer: ICONS.chamfer, shell: ICONS.shell, draft: ICONS.draft };
 /** Gövde mavi olduğu için seçim turuncu, imleç altı sarı. */
 const COLORS = { edge: 0x4a5878, hover: 0xffd23f, selected: 0xff5a1f } as const;
 const WIDTH = { edge: 1.2, hover: 3.5, selected: 3.5 } as const;
@@ -46,6 +47,11 @@ export class BrepTool implements PointerHandler {
   private objects: THREE.Object3D[] = [];
   private hitMesh: THREE.Mesh | null = null;
   private status = h("div", { class: "meta" });
+  private pull = h(
+    "select",
+    { attrs: { "aria-label": "Çekme yönü" } },
+    ...Object.entries(PULL_DIRECTIONS).map(([key, v]) => h("option", { value: key }, v.label)),
+  ) as HTMLSelectElement;
   private value = h("input", { type: "number", attrs: { "aria-label": "Değer", step: "0.5", min: "0" } }) as HTMLInputElement;
   private applyButton = h("button", { class: "btn primary", onclick: () => this.apply() }, "Uygula") as HTMLButtonElement;
 
@@ -71,7 +77,7 @@ export class BrepTool implements PointerHandler {
   }
 
   get mode(): "edges" | "faces" | null {
-    return this.type ? (this.type === "shell" ? "faces" : "edges") : null;
+    return this.type ? (this.type === "shell" || this.type === "draft" ? "faces" : "edges") : null;
   }
 
   /** Açık araçtaki gövdenin kenar / yüz betimi (testler için). */
@@ -99,7 +105,7 @@ export class BrepTool implements PointerHandler {
       BREP_LABELS[type],
       ICON_OF[type],
       () => this.close(),
-      h("div", { class: "inspect-body" }, this.status, h("label", { class: "field" }, h("span", {}, VALUE_LABELS[type]), this.value), h("div", { class: "btn-row" }, h("button", { class: "btn", onclick: () => this.close() }, "İptal"), this.applyButton)),
+      h("div", { class: "inspect-body" }, this.status, h("label", { class: "field" }, h("span", {}, VALUE_LABELS[type]), this.value), ...(type === "draft" ? [h("label", { class: "field" }, h("span", {}, "Çekme yönü"), this.pull)] : []), h("div", { class: "btn-row" }, h("button", { class: "btn", onclick: () => this.close() }, "İptal"), this.applyButton)),
     );
     this.value.addEventListener("keydown", (e) => {
       e.stopPropagation();
@@ -149,12 +155,12 @@ export class BrepTool implements PointerHandler {
     const info = this.info;
     if (!type || !info) return;
     if (!this.selected.size) {
-      this.app.showMessage(type === "shell" ? "Önce açılacak en az bir yüz seçin" : "Önce en az bir kenar seçin", "warning");
+      this.app.showMessage(this.mode === "faces" ? "Önce en az bir yüz seçin" : "Önce en az bir kenar seçin", "warning");
       return;
     }
     const value = Number(this.value.value.replace(",", "."));
-    if (!(value > 0)) {
-      this.app.showMessage(`${VALUE_LABELS[type].replace(" (mm)", "")} sıfırdan büyük olmalı`, "warning");
+    if (type === "draft" ? !value || !Number.isFinite(value) : !(value > 0)) {
+      this.app.showMessage(type === "draft" ? "Açı sıfır olamaz" : `${VALUE_LABELS[type].replace(" (mm)", "")} sıfırdan büyük olmalı`, "warning");
       return;
     }
     const chosen = [...this.selected].sort((a, b) => a - b);
@@ -162,8 +168,9 @@ export class BrepTool implements PointerHandler {
       this.app.addBrepFeature(
         type,
         this.sourceId,
-        type === "shell" ? { faces: chosen.map((i) => info.faces[i].ref) } : { edges: chosen.map((i) => info.edges[i].ref) },
+        this.mode === "faces" ? { faces: chosen.map((i) => info.faces[i].ref) } : { edges: chosen.map((i) => info.edges[i].ref) },
         value,
+        type === "draft" ? { pull: PULL_DIRECTIONS[this.pull.value].dir } : {},
       );
     } catch (e) {
       this.app.showMessage(e instanceof Error ? e.message : String(e), "error");

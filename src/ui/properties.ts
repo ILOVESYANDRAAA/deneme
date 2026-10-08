@@ -6,6 +6,8 @@ import {
   BREP_LABELS,
   FEATURE_LABELS,
   HOLE_LABELS,
+  PULL_DIRECTIONS,
+  pullKey,
   visibleParams,
   type HoleType,
   OPERATION_LABELS,
@@ -171,6 +173,10 @@ export class PropertiesPanel {
       if (f.edges?.length) form.append(h("div", { class: "meta" }, `${f.edges.length} kenar seçili`));
       if (f.faces?.length) form.append(h("div", { class: "meta" }, `${f.faces.length} yüz açık`));
       if (f.type === "hole") this.holeFields(form, f);
+      if (f.type === "draft") {
+        const dirs = Object.fromEntries(Object.entries(PULL_DIRECTIONS).map(([k, v]) => [k, v.label]));
+        form.append(this.selectField("pull", "Çekme yönü", dirs, pullKey(f.pull), (v) => this.apply(f.id, { pull: PULL_DIRECTIONS[v].dir })));
+      }
       if (f.type === "mirror") {
         const planes = Object.fromEntries((Object.keys(PLANES) as PlaneName[]).map((p) => [p, PLANES[p].label]));
         form.append(this.selectField("plane", "Ayna düzlemi", planes, f.plane ?? "YZ", (v) => this.apply(f.id, { plane: v as PlaneName })));

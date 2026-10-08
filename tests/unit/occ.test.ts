@@ -148,6 +148,31 @@ describe("OpenCascade: yuvarlatma, pah, kabuk", () => {
   });
 });
 
+describe("OpenCascade: açılı yüzey", () => {
+  const sideFaces = (): FaceRef[] => run(BOX).shape.faces.map(faceRefOf).filter((f) => f.normal && Math.abs(f.normal[2]) < 0.1);
+
+  it("yan yüzlere 5° verince üst yüz küçülür, taban sabit kalır", () => {
+    const r = run({ kind: "draft", child: BOX, angle: 5, faces: sideFaces(), pull: [0, 0, 1] });
+    const top = describeShape(r.shape).faces.find((f) => f.ref.normal && f.ref.normal[2] > 0.99)!;
+    const shrink = 10 * Math.tan((5 * Math.PI) / 180);
+    expect(top.area).toBeCloseTo((40 - 2 * shrink) * (20 - 2 * shrink), 1);
+    expect(bbox(r.mesh).min).toEqual([-20, -10, 0]);
+    expect(r.mesh.volume).toBeLessThan(8000);
+  });
+
+  it("negatif açı genişletir; ters çekme yönü nötr düzlemi tavana alır", () => {
+    const wide = run({ kind: "draft", child: BOX, angle: -5, faces: sideFaces(), pull: [0, 0, 1] });
+    expect(wide.mesh.volume).toBeGreaterThan(8000);
+    const flipped = run({ kind: "draft", child: BOX, angle: 5, faces: sideFaces(), pull: [0, 0, -1] });
+    const bottom = describeShape(flipped.shape).faces.find((f) => f.ref.normal && f.ref.normal[2] < -0.99)!;
+    expect(bottom.area).toBeLessThan(800); // artık taban daralır
+  });
+
+  it("uygunsuz açıda anlaşılır hata", () => {
+    expect(() => run({ kind: "draft", child: BOX, angle: 0.0001, faces: [{ center: [900, 0, 5], normal: [1, 0, 0], kind: "PLANE" }], pull: [0, 0, 1] })).toThrow(/yüz bulunamadı/);
+  });
+});
+
 describe("OpenCascade: seçim betimi", () => {
   it("kutunun 12 kenarı, 6 yüzü ve yüz başına üçgen eşlemesi", () => {
     const info = describeShape(run(BOX).shape);
