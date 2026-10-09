@@ -31,9 +31,32 @@ import { Timeline } from "./timeline";
 import { FeatureTree } from "./tree";
 import { UpdateChecker } from "./updates";
 import { ViewCube } from "./viewcube";
-import { STYLE_LABELS, VIEW_LABELS, Viewport, type Theme, type ViewName, type VisualStyle } from "./viewport";
+import { STYLE_LABELS, VIEW_LABELS, NAVIGATION_PRESETS, Viewport, type NavigationPreset, type Theme, type ViewName, type VisualStyle } from "./viewport";
 
 const THEME_KEY = "sugarcad.theme";
+
+const NAV_KEY = "sugarcad.navigation";
+const NAV_IDS: [string, NavigationPreset][] = [
+  ["sugarcad", "sugarCAD"],
+  ["fusion", "Fusion 360"],
+  ["solidworks", "SolidWorks"],
+  ["tinkercad", "Tinkercad"],
+];
+const NAV_HINTS: Record<NavigationPreset, string> = {
+  sugarCAD: "sol: döndür, orta: yakınlaştır, sağ: kaydır",
+  "Fusion 360": "orta tuş: kaydır, Shift+orta: döndür",
+  SolidWorks: "orta tuş: döndür, Ctrl+orta: kaydır",
+  Tinkercad: "sağ tuş: döndür, orta tuş: kaydır",
+};
+
+function savedNavigation(): NavigationPreset {
+  try {
+    const v = localStorage.getItem(NAV_KEY);
+    return (NAVIGATION_PRESETS as readonly string[]).includes(v ?? "") ? (v as NavigationPreset) : "sugarCAD";
+  } catch {
+    return "sugarCAD";
+  }
+}
 
 function savedTheme(): Theme {
   try {
@@ -152,7 +175,7 @@ export class Workbench {
   constructor(
     root: HTMLElement,
     private readonly app: SugarApp,
-    ui: WorkbenchUi,
+    private readonly ui: WorkbenchUi,
   ) {
     this.updates = new UpdateChecker(app, ui);
     this.palette = new CommandPalette(app.commands);
@@ -248,6 +271,7 @@ export class Workbench {
     );
 
     this.setTheme(savedTheme());
+    this.viewport.setNavigationPreset(savedNavigation());
     this.registerViewCommands();
     this.registerSketchCommands();
     this.registerInspectCommands();
@@ -301,6 +325,16 @@ export class Workbench {
     app.platform.setTitle(app.title());
 
     window.addEventListener("keydown", (e) => this.onKeyDown(e));
+  }
+
+  setNavigation(name: NavigationPreset, announce = false): void {
+    this.viewport.setNavigationPreset(name);
+    try {
+      localStorage.setItem(NAV_KEY, name);
+    } catch {
+      // depolama kapalıysa yalnızca bu oturumda geçerli
+    }
+    if (announce) this.ui.showMessage(`Fare düzeni: ${name} — ${NAV_HINTS[name]}`, "info");
   }
 
   setTheme(theme: Theme): void {
@@ -358,6 +392,11 @@ export class Workbench {
     c.register({ id: "view.theme", title: "Açık / Koyu Tema", category: "Görünüm" }, () =>
       this.setTheme(this.viewport.currentTheme === "dark" ? "light" : "dark"),
     );
+    for (const [id, name] of NAV_IDS) {
+      c.register({ id: `view.navigation.${id}`, title: `Fare Düzeni: ${name}`, category: "Görünüm" }, () =>
+        this.setNavigation(name, true),
+      );
+    }
     c.register({ id: "help.checkUpdates", title: "Güncellemeleri Denetle", category: "Yardım" }, () => {
       if (this.app.platform.name !== "tauri") throw new Error("Güncelleme denetimi masaüstü uygulamasında çalışır");
       return this.updates.check(true);
@@ -634,6 +673,12 @@ export class Workbench {
       this.item("sketch.importDxf", ICONS.open, { disabled: !this.sketcher.isActive }),
       { separator: true, label: "" },
       this.item("view.theme", undefined, { checked: this.viewport.currentTheme === "dark", label: "Koyu tema" }),
+      {
+        label: "Fare düzeni",
+        submenu: NAV_IDS.map(([id, name]) =>
+          this.item(`view.navigation.${id}`, undefined, { checked: this.viewport.navigationPreset === name, label: name }),
+        ),
+      },
       this.item("view.resetLayout"),
       this.item("help.checkUpdates"),
     ];

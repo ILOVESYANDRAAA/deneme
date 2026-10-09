@@ -129,6 +129,9 @@ export interface PointerHandler {
  * Three.js 3D görünümü. Sadece bir şey değiştiğinde çizer (boşta GPU/CPU harcamaz).
  * Eksen düzeni CAD alışkanlığıdır: Z yukarı.
  */
+export const NAVIGATION_PRESETS = ["sugarCAD", "Fusion 360", "SolidWorks", "Tinkercad"] as const;
+export type NavigationPreset = (typeof NAVIGATION_PRESETS)[number];
+
 export class Viewport {
   /** Görünüm öğesinden görünüme ulaşmak için (yalnızca öğe alan araçlar, örn. Ekstrüzyon diyaloğu). */
   private static readonly byElement = new WeakMap<HTMLElement, Viewport>();
@@ -227,6 +230,7 @@ export class Viewport {
     this.buildScene();
     this.bindPointer();
     this.bindContextClick();
+    this.bindNavigation();
 
     new ResizeObserver(() => this.resize()).observe(this.element);
 
@@ -343,6 +347,81 @@ export class Viewport {
     canvas.addEventListener("dblclick", (e) => {
       if (this.interaction) this.interaction.doubleClick(e);
       else if (!this.planePicker) this.fit();
+    });
+  }
+
+  // ---- Fare ile gezinme düzeni ----
+  private navPreset: NavigationPreset = "sugarCAD";
+
+  get navigationPreset(): NavigationPreset {
+    return this.navPreset;
+  }
+
+  setNavigationPreset(name: string): void {
+    this.navPreset = (NAVIGATION_PRESETS as readonly string[]).includes(name) ? (name as NavigationPreset) : "sugarCAD";
+    this.applyNavigationButtons(false, false);
+  }
+
+  /** Düzenin istediği eylem: "rotate" | "pan" | "dolly" | null (hiçbiri). sugarCAD için null = OrbitControls varsayılanı. */
+  private navAction(button: number, shift: boolean, ctrl: boolean): "rotate" | "pan" | "dolly" | null {
+    switch (this.navPreset) {
+      case "Fusion 360":
+        return button === 1 ? (shift ? "rotate" : "pan") : null;
+      case "SolidWorks":
+        return button === 1 ? (ctrl ? "pan" : "rotate") : null;
+      case "Tinkercad":
+        return button === 2 ? "rotate" : button === 1 ? "pan" : null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * OrbitControls ROTATE/PAN düğmelerinde ctrl/meta/shift ile eylemi ters çevirir; istenen eylem
+   * değiştirici tuşlarla da doğru çıksın diye düğme eşlemesi o anki değiştiricilere göre kurulur.
+   */
+  private applyNavigationButtons(shift: boolean, ctrl: boolean, button = -1): void {
+    const mb = this.controls.mouseButtons as { LEFT: number; MIDDLE: number; RIGHT: number };
+    if (this.navPreset === "sugarCAD") {
+      mb.LEFT = THREE.MOUSE.ROTATE;
+      mb.MIDDLE = THREE.MOUSE.DOLLY;
+      mb.RIGHT = THREE.MOUSE.PAN;
+      return;
+    }
+    mb.LEFT = -1;
+    mb.MIDDLE = -1;
+    mb.RIGHT = -1;
+    if (button < 0) return;
+    const action = this.navAction(button, shift, ctrl);
+    const mod = shift || ctrl;
+    const value =
+      action === "dolly"
+        ? THREE.MOUSE.DOLLY
+        : action === "rotate"
+          ? mod ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE
+          : action === "pan"
+            ? mod ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN
+            : -1;
+    if (button === 0) mb.LEFT = value;
+    else if (button === 1) mb.MIDDLE = value;
+    else if (button === 2) mb.RIGHT = value;
+  }
+
+  private bindNavigation(): void {
+    const canvas = this.renderer.domElement;
+    // Capture evresi: OrbitControls'ün kendi pointerdown'ından önce eşlemeyi kurar.
+    canvas.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (e.pointerType !== "mouse" || this.navPreset === "sugarCAD") return;
+        this.applyNavigationButtons(e.shiftKey, e.ctrlKey || e.metaKey, e.button);
+      },
+      true,
+    );
+    canvas.addEventListener("mousedown", (e) => {
+      if (this.navPreset === "sugarCAD" || e.button !== 1) return;
+      e.preventDefault(); // tarayıcının orta tuş otomatik kaydırması
+      if (e.detail === 2 && !this.planePicker && !this.interaction) this.fit();
     });
   }
 

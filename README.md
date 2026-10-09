@@ -110,6 +110,8 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
 | `Ctrl+N` / `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` | Yeni / Aç / Kaydet / Farklı kaydet |
 | `Ctrl+E` | STL olarak dışa aktar |
 | `Ctrl+Z` / `Ctrl+Y` | Geri al / Yinele |
+
+**Fare düzeni** (Dosya → Fare düzeni veya komut paletinde "Fare Düzeni: …"; seçim kalıcıdır): varsayılan *sugarCAD* — sol sürükle döndür, orta yakınlaştır, sağ kaydır. *Fusion 360* — orta tuş kaydır, Shift+orta döndür, orta tuşa çift tık görünüme sığdır, sol sürükleme kamerayı oynatmaz. *SolidWorks* — orta tuş döndür, Ctrl+orta kaydır. *Tinkercad* — sağ tuş döndür, orta kaydır. Tekerlek her düzende yakınlaştırır; sugarCAD dışında hareketsiz kısa sağ tık işaretleme menüsünü açar.
 | `Delete` / `Ctrl+D` / `Ctrl+A` | Sil / Çoğalt / Tümünü seç |
 | `Ctrl+Shift+U` / `Ctrl+Shift+D` / `Ctrl+Shift+I` | Birleşim / Çıkarma / Kesişim (iki şekil seçiliyken) |
 | `F` / çift tık | Görünüme sığdır |
