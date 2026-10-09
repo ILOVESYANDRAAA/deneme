@@ -629,12 +629,28 @@ export class Workbench {
     };
   }
 
+  /** Şerit solundaki çalışma alanı menüsü; şimdilik yalnızca Tasarım etkin, diğerleri ileride. */
+  private workspaceMenu(): { label: string; menu: MenuItem[] } {
+    return {
+      label: "TASARIM",
+      menu: [
+        { label: "Tasarım", checked: true },
+        { separator: true, label: "" },
+        { label: "Yüzey", disabled: true },
+        { label: "Sac Metal", disabled: true },
+        { label: "Üretim", disabled: true },
+        { label: "Çizim", disabled: true },
+      ],
+    };
+  }
+
   private renderRibbon(): void {
+    const workspace = this.workspaceMenu();
     if (this.sketcher.isActive) {
-      this.ribbon.render([{ label: "KATI", active: false, run: () => this.sketcher.finish() }, { label: "ESKİZ", active: true }], this.sketchGroups());
+      this.ribbon.render([{ label: "KATI", active: false, run: () => this.sketcher.finish() }, { label: "ESKİZ", active: true }], this.sketchGroups(), workspace);
       return;
     }
-    this.ribbon.render([{ label: "KATI", active: true }], this.solidGroups());
+    this.ribbon.render([{ label: "KATI", active: true }], this.solidGroups(), workspace);
   }
 
   private solidGroups(): RibbonGroup[] {

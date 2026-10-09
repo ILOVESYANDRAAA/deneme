@@ -32,6 +32,12 @@ export interface RibbonTab {
   run?: () => void;
 }
 
+/** Şerit solundaki çalışma alanı açılır düğmesi (TASARIM ▾). */
+export interface RibbonWorkspace {
+  label: string;
+  menu: MenuItem[];
+}
+
 /**
  * Fusion 360 tarzı araç şeridi: üstte sekmeler, altında gruplar. Her grup birkaç hızlı
  * düğme ve altında açılır menülü bir etiket (OLUŞTUR ▾) içerir.
@@ -39,13 +45,16 @@ export interface RibbonTab {
 export class Ribbon {
   readonly element: HTMLElement;
   private tabs = h("div", { class: "rtabs", attrs: { role: "tablist" } });
+  private tabbar = h("div", { class: "rtabbar" }, this.tabs);
   private groups = h("div", { class: "rgroups" });
 
   constructor() {
-    this.element = h("div", { class: "ribbon", attrs: { role: "toolbar", "aria-label": "Araçlar" } }, this.tabs, this.groups);
+    this.element = h("div", { class: "ribbon", attrs: { role: "toolbar", "aria-label": "Araçlar" } }, this.tabbar, this.groups);
   }
 
-  render(tabs: RibbonTab[], groups: RibbonGroup[]): void {
+  render(tabs: RibbonTab[], groups: RibbonGroup[], workspace?: RibbonWorkspace): void {
+    this.tabbar.querySelector(".rworkspace")?.remove();
+    if (workspace) this.tabbar.prepend(this.workspaceButton(workspace));
     this.tabs.replaceChildren(
       ...tabs.map((t) =>
         h(
@@ -60,6 +69,21 @@ export class Ribbon {
       ),
     );
     this.groups.replaceChildren(...groups.map((g) => this.group(g)));
+  }
+
+  private workspaceButton(w: RibbonWorkspace): HTMLElement {
+    const btn = h(
+      "button",
+      {
+        class: "rworkspace",
+        attrs: { "aria-haspopup": "menu", "aria-label": `Çalışma alanı: ${w.label.charAt(0)}${w.label.slice(1).toLocaleLowerCase("tr")}` },
+        title: "Çalışma alanı",
+        onclick: () => openMenu(btn, w.menu),
+      },
+      w.label,
+      icon(ICONS.chevronDown),
+    );
+    return btn;
   }
 
   private group(g: RibbonGroup): HTMLElement {

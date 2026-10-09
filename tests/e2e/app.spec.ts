@@ -1343,3 +1343,20 @@ test("Helis ekle, Taşı / Kopyala ve Gövdeyi Böl araç şeridinden çalışı
   }).toBe(true);
   expect(errors).toEqual([]);
 });
+
+test("çalışma alanı menüsü: Tasarım işaretli, diğerleri devre dışı, Esc kapatır", async ({ page }) => {
+  await open(page);
+  const btn = page.getByRole("button", { name: "Çalışma alanı: Tasarım" });
+  await expect(btn).toHaveAttribute("aria-haspopup", "menu");
+  await btn.click();
+  const menu = page.getByRole("menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.getByRole("menuitemcheckbox", { name: "Tasarım" })).toHaveAttribute("aria-checked", "true");
+  for (const ad of ["Yüzey", "Sac Metal", "Üretim", "Çizim"]) {
+    await expect(menu.getByText(ad, { exact: true })).toBeVisible();
+    await expect(menu.getByRole("menuitem", { name: ad, exact: true })).toBeDisabled();
+  }
+  await page.screenshot({ path: `${S}/calisma-alani-menu.png`, clip: { x: 0, y: 0, width: 900, height: 260 } });
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+});
