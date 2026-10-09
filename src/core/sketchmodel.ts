@@ -525,7 +525,7 @@ export function curveSegments(d: SketchData, c: SCurve, pm = pointMap(d)): [Vec2
   return segs;
 }
 
-export type SnapKind = "köşe" | "merkez" | "orta nokta" | "nokta";
+export type SnapKind = "köşe" | "merkez" | "orta nokta" | "nokta" | "eğri üzerinde";
 
 /** Yakalama noktaları: uç noktalar, merkezler, tek noktalar ve çizgi ortaları. */
 export function snapCandidates(d: SketchData): { p: Vec2; kind: SnapKind; pointId?: string; curveId?: string }[] {

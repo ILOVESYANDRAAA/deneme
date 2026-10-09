@@ -23,7 +23,7 @@ import {
   type SnapKind,
 } from "../core/sketchmodel";
 import { evaluateInput } from "../core/expr";
-import { boxOf, curvesInBox, findAlignment } from "../core/sketchpick";
+import { boxOf, curvesInBox, findAlignment, nearestOnCurve } from "../core/sketchpick";
 import { extendCurve, offsetCurves, patternCircular, patternRect, rotateAbout, trimCurve, translateBy } from "../core/sketchops";
 import type { Vec2 } from "../core/solid";
 import type { PointerHandler, Viewport } from "./viewport";
@@ -179,11 +179,15 @@ export class Sketcher implements PointerHandler {
   gridStep = 1;
   /** Yapım aşamasındaki noktaların yakalandığı mevcut nokta kimlikleri (aynı sırayla). */
   private pendingIds: (string | null)[] = [];
+  /** Tıklanan noktaların üzerine bırakıldığı mevcut eğri (varsa); yeni nokta "eğri üzerinde" kısıtıyla bağlanır. */
+  private pendingCurves: (string | null)[] = [];
   /** Seçili öğeler: eğri ("c…"), nokta ("p…") ve kısıt ("k…") kimlikleri (araç yokken tıklayarak seçilir). */
   readonly selected = new Set<string>();
   hovered: string | null = null;
   /** İmlecin yakalandığı mevcut nokta (varsa); yeni çizim ona bağlanır. */
   private snapId: string | null = null;
+  /** İmlecin üzerine yapıştığı eğri (varsa). */
+  private snapCurveId: string | null = null;
   /** Ölçü aracının topladığı öğeler ve açık ölçü kutusu. */
   private dimPick: string[] = [];
   draft: DimensionDraft | null = null;
@@ -289,6 +293,7 @@ export class Sketcher implements PointerHandler {
   private resetPending(): void {
     this.pending = [];
     this.pendingIds = [];
+    this.pendingCurves = [];
   }
 
   /** Çizim yarıda mı (en az bir nokta tıklanmış)? */
@@ -405,6 +410,7 @@ export class Sketcher implements PointerHandler {
     if (!this.pending.length) return;
     this.pending.pop();
     this.pendingIds.pop();
+    this.pendingCurves.pop();
     this.locked = {};
     this.updatePreview();
     this.onDidChange.fire();
@@ -681,9 +687,11 @@ export class Sketcher implements PointerHandler {
   }
 
   /** Eskiz koordinatında bir tıklama (fare ve testler bunu kullanır). `id`: yakalanan mevcut nokta. */
-  addPoint(p: Vec2, id: string | null = this.snapId): void {
+  addPoint(p: Vec2, id: string | null = this.snapId, curveId: string | null = this.snapCurveId): void {
     const tool = this.tool;
     if (!tool) return;
+    // Yazılan ölçüler noktayı eğriden uzaklaştırmış olabilir; yalnızca hâlâ üzerindeyse kısıt kurulur.
+    const onto = !id && curveId && nearestOnCurve(this.data(), p, 1e-5, curveId) ? curveId : null;
     const info = TOOLS[tool];
     if (tool === "fillet") {
       this.filletAt(p, id);
@@ -698,6 +706,7 @@ export class Sketcher implements PointerHandler {
       }
       this.pending.push(p);
       this.pendingIds.push(id);
+      this.pendingCurves.push(onto);
       this.locked = {};
       this.updatePreview();
       this.onDidChange.fire();
@@ -706,9 +715,11 @@ export class Sketcher implements PointerHandler {
     if (this.pending.some((q) => same(q, p))) return; // aynı noktaya ikinci tık
     const points = [...this.pending, p];
     const ids = [...this.pendingIds, id];
+    const curves = [...this.pendingCurves, onto];
     if (points.length < info.clicks) {
       this.pending = points;
       this.pendingIds = ids;
+      this.pendingCurves = curves;
       this.locked = {};
       this.updatePreview();
       this.onDidChange.fire();
@@ -716,7 +727,9 @@ export class Sketcher implements PointerHandler {
     }
     // Geçersiz (sıfır boyutlu, doğrusal) şekilde son tık yok sayılır.
     const ed = this.edit_();
+    const before = new Set(ed.d.points.map((q) => q.id));
     if (!buildTool(ed, tool, points, ids, this.options, this.options.construction)) return;
+    pinToCurves(ed, before, points, curves);
     this.resetPending();
     this.locked = {};
     this.apply(ed);
@@ -822,6 +835,7 @@ export class Sketcher implements PointerHandler {
   private commitMulti(closed: boolean): void {
     if (this.pending.length < 2) return;
     const ed = this.edit_();
+    const before = new Set(ed.d.points.map((q) => q.id));
     const opts = { construction: this.options.construction, snapped: this.pendingIds };
     if (this.tool === "spline") {
       const ids = this.pending.map((q, i) => ed.pointAt(q, this.pendingIds[i]));
@@ -829,6 +843,7 @@ export class Sketcher implements PointerHandler {
     } else {
       buildPolyline(ed, this.pending, closed, opts);
     }
+    pinToCurves(ed, before, this.pending, this.pendingCurves);
     this.resetPending();
     this.locked = {};
     this.apply(ed);
@@ -1198,6 +1213,7 @@ export class Sketcher implements PointerHandler {
     this.gridStep = niceStep(wpp * 12);
     this.snapKind = null;
     this.snapId = null;
+    this.snapCurveId = null;
     this.guides = [];
     if (this.options.snapPoints) {
       const candidates: { p: Vec2; kind: SnapKind; pointId?: string }[] = [
@@ -1222,13 +1238,29 @@ export class Sketcher implements PointerHandler {
       }
     }
     const free: Vec2 = this.options.snapGrid ? snapToGrid(raw, this.gridStep) : roundPoint(raw);
+    const onCurve = this.curveSnap(raw, wpp);
+    if (onCurve) return onCurve;
     return this.alignTo(raw, free, wpp);
+  }
+
+  /** Çizim araçlarında imleç bir çizgi / daire / yayın üzerine yaklaşınca ona yapışır. */
+  private curveSnap(raw: Vec2, wpp: number): Vec2 | null {
+    if (!this.drawingTool || !this.options.snapPoints) return null;
+    const hit = nearestOnCurve(this.data(), raw, SNAP_PX * wpp);
+    if (!hit) return null;
+    this.snapKind = "eğri üzerinde";
+    this.snapCurveId = hit.curveId;
+    return [Number(hit.p[0].toFixed(6)) + 0, Number(hit.p[1].toFixed(6)) + 0];
+  }
+
+  /** Bir şekil çizen araç açık mı? (ölçü, kırp / uzat / ofset ve köşe yuvarlatma hariç) */
+  private get drawingTool(): boolean {
+    return !!this.tool && this.tool !== "dimension" && this.tool !== "fillet" && !CURVE_TOOLS.has(this.tool);
   }
 
   /** Çizim araçlarında imleç başka noktalarla yatay / dikey hizalanınca ona yapışır ve kılavuz çizer. */
   private alignTo(raw: Vec2, free: Vec2, wpp: number): Vec2 {
-    const drawing = this.tool && this.tool !== "dimension" && !CURVE_TOOLS.has(this.tool);
-    if (!drawing || !this.options.snapPoints) return free;
+    if (!this.drawingTool || !this.options.snapPoints) return free;
     const sources: Vec2[] = [[0, 0], ...snapCandidates(this.data()).map((c) => c.p), ...this.pending];
     const al = findAlignment(sources, raw, SNAP_PX * wpp * 0.6);
     const p: Vec2 = [al.x ? al.x[0] : free[0], al.y ? al.y[1] : free[1]];
@@ -1312,6 +1344,19 @@ export class Sketcher implements PointerHandler {
     }
     return `Eskiz · ${plane} — ${text}`;
   }
+}
+
+/**
+ * Bir eğrinin üzerine tıklanan noktalar, çizimden doğan yeni noktaya "eğri üzerinde" kısıtıyla bağlanır.
+ * Yeni nokta, `before`'da olmayan ve tıklanan konumda duran nokta olarak bulunur.
+ */
+function pinToCurves(ed: SketchEdit, before: Set<string>, points: Vec2[], curves: (string | null)[]): void {
+  points.forEach((p, i) => {
+    const curve = curves[i];
+    if (!curve || !ed.d.curves.some((c) => c.id === curve)) return;
+    const created = ed.d.points.find((q) => !before.has(q.id) && Math.abs(q.x - p[0]) < 1e-9 && Math.abs(q.y - p[1]) < 1e-9);
+    if (created) ed.constrain("onCurve", [created.id, curve]);
+  });
 }
 
 function previewSegments(ed: SketchEdit): [Vec2, Vec2][] {

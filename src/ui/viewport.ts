@@ -1,5 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import type { SugarApp } from "../app/controller";
 import { Emitter } from "../core/events";
 import { sketchDataOf } from "../core/features";
@@ -10,6 +13,11 @@ import type { MeshData } from "../geometry/evaluate";
 import { h } from "./dom";
 
 export type Theme = "light" | "dark";
+
+/** Eskiz çizgi kalınlıkları (piksel): etkin eskiz, seçili / üzerine gelinen, etkin olmayan. */
+const SKETCH_LINE_PX = 2;
+const SKETCH_LINE_PX_HIGHLIGHT = 3.5;
+const SKETCH_LINE_PX_IDLE = 1.5;
 
 /** Temaya göre 3D görünüm renkleri. */
 const THEMES = {
@@ -643,18 +651,22 @@ export class Viewport {
       const offset = f.params.offset ?? 0;
       const color = active ? this.c.sketchActive : selected.has(f.id) ? this.c.sketchSelected : this.c.sketch;
       const pm = pointMap(data);
-      const groups = new Map<string, { color: string; dashed: boolean; segs: [Vec2, Vec2][] }>();
+      const groups = new Map<string, { color: string; width: number; dashed: boolean; segs: [Vec2, Vec2][] }>();
       for (const curve of data.curves) {
         let key = curve.construction ? "construction" : "normal";
         let c = curve.construction ? this.c.construction : color;
+        // Etkin eskizde çizgiler kalın; seçili / üzerine gelinen daha da kalın. Etkin olmayanlar ince.
+        let width = active ? SKETCH_LINE_PX : SKETCH_LINE_PX_IDLE;
         if (active && this.highlight.selected.has(curve.id)) {
           key = `sel-${key}`;
           c = this.c.entitySelected;
+          width = SKETCH_LINE_PX_HIGHLIGHT;
         } else if (active && this.highlight.hovered === curve.id) {
           key = `hover-${key}`;
           c = this.c.entityHover;
+          width = SKETCH_LINE_PX_HIGHLIGHT;
         }
-        const g = groups.get(key) ?? { color: c, dashed: !!curve.construction, segs: [] };
+        const g = groups.get(key) ?? { color: c, width, dashed: !!curve.construction, segs: [] };
         g.segs.push(...curveSegments(data, curve, pm));
         groups.set(key, g);
       }
@@ -662,13 +674,21 @@ export class Viewport {
         const pts: number[] = [];
         for (const [a, b] of g.segs) pts.push(...toWorld(plane, offset, a), ...toWorld(plane, offset, b));
         if (!pts.length) continue;
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-        const material = g.dashed
-          ? new THREE.LineDashedMaterial({ color: g.color, depthTest: !active, transparent: true, dashSize: this.worldPerPixel() * 6, gapSize: this.worldPerPixel() * 4 })
-          : // Saydam geçişte çizilir ki yarı saydam zemin ızgarası çizgilerin üstüne binmesin.
-            new THREE.LineBasicMaterial({ color: g.color, depthTest: !active, transparent: true });
-        const line = new THREE.LineSegments(geometry, material);
+        // WebGL'de çizgi kalınlığı 1 pikselle sınırlı; kalın çizgi için LineSegments2 kullanılır.
+        const geometry = new LineSegmentsGeometry();
+        geometry.setPositions(pts);
+        // Saydam geçişte çizilir ki yarı saydam zemin ızgarası çizgilerin üstüne binmesin.
+        const material = new LineMaterial({
+          color: g.color,
+          linewidth: g.width,
+          depthTest: !active,
+          transparent: true,
+          dashed: g.dashed,
+          dashSize: this.worldPerPixel() * 6,
+          gapSize: this.worldPerPixel() * 4,
+        });
+        material.resolution.copy(this.renderer.getSize(new THREE.Vector2()));
+        const line = new LineSegments2(geometry, material);
         if (g.dashed) line.computeLineDistances();
         line.renderOrder = active ? 9 : 1;
         line.userData.featureId = f.id;
@@ -940,6 +960,10 @@ export class Viewport {
     const { clientWidth: w, clientHeight: h } = this.element;
     if (w === 0 || h === 0) return;
     this.renderer.setSize(w, h, false);
+    // Kalın eskiz çizgileri ekran boyutuna göre çizilir.
+    this.sketchGroup.traverse((o) => {
+      if (o instanceof LineSegments2) o.material.resolution.set(w, h);
+    });
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.requestRender();

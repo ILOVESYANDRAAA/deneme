@@ -1,7 +1,7 @@
 /**
  * Eskizde seçim ve yakalama yardımcıları (saf mantık): dikdörtgenle seçim ve diğer noktalarla hizalama.
  */
-import { curveSegments, pointMap, type SketchData } from "./sketchmodel";
+import { arcInfo, curveById, curveSegments, pointMap, type SketchData } from "./sketchmodel";
 import type { Vec2 } from "./solid";
 
 export interface Box {
@@ -94,4 +94,57 @@ export function findAlignment(sources: readonly Vec2[], raw: Vec2, tol: number):
     }
   }
   return out;
+}
+
+export interface CurveSnap {
+  /** Eğri üzerindeki en yakın nokta. */
+  p: Vec2;
+  curveId: string;
+}
+
+const TAU = Math.PI * 2;
+
+/**
+ * İmlece en yakın eğri noktası (çizgi, daire, yay: çözücünün "eğri üzerinde" kısıtı kurabildikleri).
+ * `tol` içinde eğri yoksa null; `only` verilirse yalnızca o eğri bakılır.
+ */
+export function nearestOnCurve(d: SketchData, raw: Vec2, tol: number, only?: string): CurveSnap | null {
+  const pm = pointMap(d);
+  let best: CurveSnap | null = null;
+  let bestDist = tol;
+  const consider = (p: Vec2, curveId: string) => {
+    const dd = Math.hypot(p[0] - raw[0], p[1] - raw[1]);
+    if (dd <= bestDist) {
+      bestDist = dd;
+      best = { p, curveId };
+    }
+  };
+  for (const c of only ? [curveById(d, only)].filter((x) => !!x) : d.curves) {
+    if (!c) continue;
+    if (c.kind === "line") {
+      const a = pm.get(c.p1)!;
+      const b = pm.get(c.p2)!;
+      const ab: Vec2 = [b[0] - a[0], b[1] - a[1]];
+      const l2 = ab[0] * ab[0] + ab[1] * ab[1];
+      if (l2 < 1e-18) continue;
+      const t = Math.max(0, Math.min(1, ((raw[0] - a[0]) * ab[0] + (raw[1] - a[1]) * ab[1]) / l2));
+      consider([a[0] + ab[0] * t, a[1] + ab[1] * t], c.id);
+    } else if (c.kind === "circle") {
+      const o = pm.get(c.c)!;
+      const v: Vec2 = [raw[0] - o[0], raw[1] - o[1]];
+      const l = Math.hypot(v[0], v[1]);
+      if (l < 1e-12) continue;
+      consider([o[0] + (v[0] / l) * c.r, o[1] + (v[1] / l) * c.r], c.id);
+    } else if (c.kind === "arc") {
+      const g = arcInfo(pm.get(c.c)!, pm.get(c.s)!, pm.get(c.e)!);
+      const v: Vec2 = [raw[0] - g.c[0], raw[1] - g.c[1]];
+      const l = Math.hypot(v[0], v[1]);
+      if (l < 1e-12) continue;
+      // Yayın açısal aralığında mı? (uçlar noktalarla yakalanır)
+      const rel = (((Math.atan2(v[1], v[0]) - g.a0) % TAU) + TAU) % TAU;
+      if (rel > g.sweep) continue;
+      consider([g.c[0] + (v[0] / l) * g.r, g.c[1] + (v[1] / l) * g.r], c.id);
+    }
+  }
+  return best;
 }

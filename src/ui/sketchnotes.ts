@@ -189,6 +189,8 @@ export class SketchNotes {
       const R = 6;
       if (sk.snapKind === "merkez") {
         g.append(svgEl("circle", { cx: String(x), cy: String(y), r: String(R) }), svgEl("circle", { class: "dot", cx: String(x), cy: String(y), r: "1.5" }));
+      } else if (sk.snapKind === "eğri üzerinde") {
+        g.append(svgEl("path", { d: `M${x - R} ${y - R}L${x + R} ${y + R}M${x + R} ${y - R}L${x - R} ${y + R}` }));
       } else if (sk.snapKind === "orta nokta") {
         g.append(svgEl("path", { d: `M${x} ${y - R}L${x + R} ${y + R}L${x - R} ${y + R}Z` }));
       } else {

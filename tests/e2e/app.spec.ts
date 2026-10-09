@@ -495,6 +495,39 @@ test("kutu seçimi, yakalama göstergesi ve hizalama kılavuzu", async ({ page }
   expect(errors).toEqual([]);
 });
 
+test("çizgi üzerine yakalama: eğri üzerinde kısıtı kurulur, simge görünür", async ({ page }) => {
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("l");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [40, 0], { double: true });
+  await page.keyboard.press("Escape");
+  const at = (p: [number, number]) =>
+    page.evaluate((p) => {
+      const ui = (window as any).sugarcadUi;
+      return ui.viewport.screenPoint(ui.sketcher.plane, 0, p);
+    }, p);
+
+  // Çizginin üzerinde (ızgarada olmayan bir yer, orta noktadan uzak) yeni bir çizgi başlat
+  await page.keyboard.press("l");
+  const near = await at([13, 0]);
+  await page.mouse.move(near.x, near.y + 3);
+  await expect(page.locator(".snap-glyph .snap-label")).toHaveText("eğri üzerinde");
+  await page.mouse.click(near.x, near.y + 3);
+  await clickSketch(page, [13, 20], { double: true });
+  const d = await sketchData(page);
+  const on = d.constraints.filter((k: any) => k.type === "onCurve");
+  expect(on).toHaveLength(1);
+  const line = d.curves.find((c: any) => c.id === on[0].refs[1]);
+  expect(line).toBeTruthy();
+  const pt = d.points.find((p: any) => p.id === on[0].refs[0]);
+  expect(pt.y).toBeCloseTo(0, 4); // nokta çizginin üzerinde
+  expect(pt.x).toBeGreaterThan(5);
+  expect(pt.x).toBeLessThan(35);
+  expect(errors).toEqual([]);
+});
+
 test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitleme ve tam tanımlı durum", async ({ page }) => {
   const errors = await open(page);
   await expect(page.locator("body[data-solver=true]")).toBeAttached();

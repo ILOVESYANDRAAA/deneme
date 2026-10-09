@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SketchEdit } from "../../src/core/sketchmodel";
-import { boxOf, curvesInBox, findAlignment } from "../../src/core/sketchpick";
+import { boxOf, curvesInBox, findAlignment, nearestOnCurve } from "../../src/core/sketchpick";
 
 function scene() {
   const ed = new SketchEdit();
@@ -45,5 +45,42 @@ describe("hizalama", () => {
 
   it("tolerans dışındaysa hizalanmaz", () => {
     expect(findAlignment([[10, 10]], [12, 15], 0.5)).toEqual({});
+  });
+});
+
+describe("eğri üzerine yakalama", () => {
+  it("çizgide dik izdüşüm, uçlarla sınırlı", () => {
+    const ed = new SketchEdit();
+    const l = ed.line(ed.point([0, 0]), ed.point([10, 0]));
+    expect(nearestOnCurve(ed.d, [4, 0.5], 1)).toEqual({ p: [4, 0], curveId: l });
+    // Uçtan taşan imleç uca yapışır (uç noktalar ayrıca nokta yakalamasıyla gelir)
+    expect(nearestOnCurve(ed.d, [10.4, 0.3], 1)?.p).toEqual([10, 0]);
+    expect(nearestOnCurve(ed.d, [4, 3], 1)).toBeNull();
+  });
+
+  it("daire üzerinde merkezden imlece doğru en yakın nokta", () => {
+    const ed = new SketchEdit();
+    const c = ed.circle(ed.point([0, 0]), 5);
+    const hit = nearestOnCurve(ed.d, [0, 5.4], 1)!;
+    expect(hit.curveId).toBe(c);
+    expect(hit.p[0]).toBeCloseTo(0, 9);
+    expect(hit.p[1]).toBeCloseTo(5, 9);
+    expect(nearestOnCurve(ed.d, [0, 0], 1)).toBeNull(); // merkez: eğriye uzak
+  });
+
+  it("yayda yalnızca süpürülen aralıkta (üst yarım yay)", () => {
+    const ed = new SketchEdit();
+    // Saat yönünün tersine (10,0) → (-10,0): üst yarı
+    const arc = ed.arc(ed.point([0, 0]), ed.point([10, 0]), ed.point([-10, 0]));
+    expect(nearestOnCurve(ed.d, [0, 10.3], 1)?.curveId).toBe(arc);
+    expect(nearestOnCurve(ed.d, [0, -10.3], 1)).toBeNull();
+  });
+
+  it("only: yalnızca o eğriye bakar", () => {
+    const ed = new SketchEdit();
+    const a = ed.line(ed.point([0, 0]), ed.point([10, 0]));
+    const b = ed.line(ed.point([0, 0.2]), ed.point([10, 0.2]));
+    expect(nearestOnCurve(ed.d, [5, 0.1], 1, a)?.curveId).toBe(a);
+    expect(nearestOnCurve(ed.d, [5, 0.1], 1, b)?.curveId).toBe(b);
   });
 });
