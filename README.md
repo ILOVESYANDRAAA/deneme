@@ -100,7 +100,7 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
 | `Enter` / çift tık | Çizgiyi / eğriyi açık bırakıp bitir |
 | `Backspace` | Son noktayı geri al |
 | `Delete` / `X` | Eskizde: seçili öğeleri sil / yapı çizgisi yap |
-| `Esc` | Yarım şekli iptal et → seçimi bırak → aracı bırak → eskizden çık |
+| `Esc` | Yarım şekli iptal et → seçimi bırak → aracı bırak (eskizden çıkmaz; çıkmak için `Ctrl+Enter` ya da Eskizi Bitir) |
 | `Ctrl+Enter` | Eskizi bitir |
 | `E` / `Shift+R` | Ekstrüzyon / Döndürme |
 | `I` | Ölç |

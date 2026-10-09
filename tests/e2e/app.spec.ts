@@ -136,7 +136,11 @@ test("eskiz modunda Esc, geri al ve Delete güvenli çalışır", async ({ page 
   await page.keyboard.press("Control+z");
   await expect.poll(() => features(page)).toEqual([{ type: "sketch", entities: 4 }]);
   await page.keyboard.press("Escape"); // aracı bırak
-  await page.keyboard.press("Escape"); // eskizden çık
+  // Esc eskizden çıkarmaz: art arda basınca da eskiz açık kalır, çıkış Ctrl+Enter ile
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  expect(await page.evaluate(() => (window as any).sugarcadUi.sketcher.isActive)).toBe(true);
+  await page.keyboard.press("Control+Enter");
   await expect(page.getByRole("toolbar", { name: "Araçlar" }).getByRole("button", { name: "Eskiz", exact: true })).toBeVisible();
   // Eskiz sonradan düzenlenebilir
   await page.getByRole("button", { name: "Eskizi Düzenle" }).click();
@@ -571,7 +575,7 @@ test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitlem
   // Sol alt köşeyi sabitle → tam tanımlı
   bb = await bounds(page);
   expect(bb.maxY - bb.minY).toBeCloseTo(25, 3);
-  await page.keyboard.press("Escape"); // ölçü aracını bırak (ikinci Esc eskizden çıkardı)
+  await page.keyboard.press("Escape"); // ölçü aracını bırak
   await clickSketch(page, [bb.minX, bb.minY]);
   await page.getByRole("toolbar", { name: "Araçlar" }).getByRole("button", { name: /Kısıt: Sabit/ }).click();
   await expect(page.locator(".statusbar .dof")).toHaveText("Tam tanımlı");

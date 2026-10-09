@@ -380,7 +380,10 @@ export class Sketcher implements PointerHandler {
     this.onDidChange.fire();
   }
 
-  /** Esc: önce yarım şekli, sonra seçimi, sonra aracı bırakır; hiçbiri yoksa eskizden çıkar. */
+  /**
+   * Esc: önce açık ölçüyü / yarım şekli, sonra seçimi, sonra aracı bırakır. Hiçbiri yoksa bir şey yapmaz:
+   * eskizden yanlışlıkla çıkılmasın diye çıkış yalnızca "Eskizi Bitir" ya da Ctrl+Enter ile olur.
+   */
   escape(): void {
     if (this.draft || this.dimPick.length) {
       this.cancelDimension();
@@ -391,7 +394,7 @@ export class Sketcher implements PointerHandler {
       this.locked = {};
     } else if (this.selected.size) this.selected.clear();
     else if (this.tool) this.tool = null;
-    else return this.finish();
+    else return;
     this.updatePreview();
     this.onDidChange.fire();
   }
