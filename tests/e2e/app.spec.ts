@@ -1466,7 +1466,7 @@ test("Helis ekle, Taşı / Kopyala ve Gövdeyi Böl araç şeridinden çalışı
   await expect(toolbar.getByRole("button", { name: "Taşı / Kopyala", exact: true })).toBeEnabled();
   const before = await volumeOf(page, 0);
   await toolbar.getByRole("button", { name: "Gövdeyi Böl", exact: true }).click();
-  await expect.poll(() => features(page).then((f) => f.map((x) => x.type))).toEqual(["coil", "split"]);
+  await expect.poll(() => features(page).then((f) => f.map((x: any) => x.type))).toEqual(["coil", "split"]);
   // Orta yükseklikten böl: kalan hacim yaklaşık yarısı
   await page.evaluate(() => {
     const app = (window as any).sugarcad;
