@@ -4,6 +4,8 @@ import { openMenu, type MenuItem } from "./menu";
 
 export interface RibbonButton {
   label: string;
+  /** Düğmenin altında görünen kısa ad (yoksa `label`). */
+  short?: string;
   icon: string;
   run: () => void;
   title?: string;
@@ -73,7 +75,8 @@ export class Ribbon {
           dataset: b.command ? { command: b.command } : {},
         },
         icon(b.icon),
-        g.primary ? h("span", { class: "rtool-label" }, b.label) : null,
+        // Fusion'daki gibi her düğmenin altında kısa ad; erişilebilir ad (aria-label) tam komut adı kalır.
+        h("span", { class: "rtool-label" }, b.short ?? b.label),
       );
       if (b.pressed !== undefined) btn.setAttribute("aria-pressed", String(b.pressed));
       return btn;

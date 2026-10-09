@@ -41,6 +41,17 @@ function savedTheme(): Theme {
 }
 
 /** Arayüzün bildirim ve form tarafı; uygulama kurulmadan önce de hazır olmalı. */
+/** Uzun komut adlarının şerit düğmesi altındaki kısa karşılıkları (erişilebilir ad tam kalır). */
+const SHORT_LABELS: Record<string, string> = {
+  "Dikdörtgensel Desen": "Desen",
+  "Köşe Yuvarlatma": "Yuvarlat",
+  "Taşı / Kopyala": "Taşı",
+  "Gövdeyi Böl": "Böl",
+  "Kütle Özellikleri": "Kütle",
+  "Kesit Analizi": "Kesit",
+  "Eskizi Bitir": "Bitir",
+};
+
 export class WorkbenchUi implements UiBridge {
   private notifications = new Notifications();
 
@@ -590,6 +601,7 @@ export class Workbench {
     const label = extra.label ?? info?.title ?? command;
     return {
       label,
+      short: SHORT_LABELS[label] ?? label.replace(/^Kısıt: /, ""),
       icon: svg,
       command,
       title: info?.keybinding ? `${label} (${info.keybinding})` : label,

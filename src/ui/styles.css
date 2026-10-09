@@ -238,10 +238,15 @@ button {
 }
 
 .rtool {
-  width: 40px;
-  height: 38px;
-  display: grid;
-  place-items: center;
+  min-width: 54px;
+  max-width: 72px;
+  height: 72px;
+  padding: 4px 4px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 3px;
   border: 1px solid transparent;
   border-radius: 4px;
   background: none;
@@ -249,9 +254,21 @@ button {
 }
 
 .rtool .icon svg {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   stroke-width: 1.1;
+}
+
+/* Düğme adı ikonun altında, en çok iki satır (Fusion şeridi gibi). */
+.rtool-label {
+  font-size: 11px;
+  line-height: 1.1;
+  text-align: center;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
 }
 
 .rtool:hover:not(:disabled) {
@@ -271,10 +288,6 @@ button {
 }
 
 .rgroup.primary .rtool {
-  width: auto;
-  display: flex;
-  gap: 6px;
-  padding: 0 12px;
   color: var(--ok);
   font-weight: 700;
 }
