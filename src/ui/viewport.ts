@@ -1027,6 +1027,60 @@ export class Viewport {
     this.fit();
   }
 
+  // ---- kamera: izdüşüm ve yön ----
+
+  private projectionMode: "perspective" | "orthographic" = "perspective";
+  private static readonly PERSPECTIVE_FOV = 45;
+  private static readonly ORTHO_FOV = 1;
+
+  get projection(): "perspective" | "orthographic" {
+    return this.projectionMode;
+  }
+
+  /**
+   * Perspektif / ortografik. Ortografik, gerçek OrthographicCamera yerine "neredeyse ortografik"tir:
+   * görüş açısı 1°'ye indirilir ve kamera aynı görünür boyutu koruyacak kadar uzaklaştırılır (dolly-zoom).
+   */
+  setProjection(mode: "perspective" | "orthographic"): void {
+    if (mode === this.projectionMode) return;
+    const from = this.camera.fov;
+    const to = mode === "orthographic" ? Viewport.ORTHO_FOV : Viewport.PERSPECTIVE_FOV;
+    const ratio = Math.tan(THREE.MathUtils.degToRad(from / 2)) / Math.tan(THREE.MathUtils.degToRad(to / 2));
+    const dir = this.camera.position.clone().sub(this.controls.target);
+    this.camera.position.copy(this.controls.target).addScaledVector(dir, ratio);
+    this.camera.fov = to;
+    this.camera.near = Math.max(0.01, this.camera.near * ratio);
+    this.camera.far = this.camera.far * ratio;
+    this.projectionMode = mode;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+    this.requestRender();
+    this.onDidChangeDisplay.fire();
+  }
+
+  /** Kamerayı hedefe göre `dir` yönüne (hedeften kameraya), mevcut mesafede, Z yukarı olacak şekilde yerleştirir. */
+  setViewDirection(dir: Vec3): void {
+    const d = new THREE.Vector3(...dir);
+    if (d.lengthSq() < 1e-12) return;
+    d.normalize();
+    // Tam üst/alt bakışta up=Z ile lookAt dejenere olmasın diye küçük bir sapma verilir (VIEW_DIRS ile aynı).
+    if (Math.abs(d.z) > 0.9999) d.y -= 0.0001 * Math.sign(d.z);
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    this.camera.up.set(0, 0, 1);
+    this.camera.position.copy(this.controls.target).addScaledVector(d.normalize(), distance);
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
+    this.requestRender();
+  }
+
+  /** Mesafeyi ölçekler: factor<1 hedefe yaklaşır, factor>1 uzaklaşır. */
+  zoomBy(factor: number): void {
+    const dir = this.camera.position.clone().sub(this.controls.target);
+    this.camera.position.copy(this.controls.target).addScaledVector(dir, factor);
+    this.controls.update();
+    this.requestRender();
+  }
+
   /** Görünümden kameraya doğru birim vektörlerin, kameranın ekran eksenlerindeki karşılığı (ViewCube için). */
   viewRotation(): number[] {
     this.camera.updateMatrixWorld();

@@ -864,27 +864,45 @@ export class Workbench {
       if (pressed !== undefined) b.setAttribute("aria-pressed", String(pressed));
       return b;
     };
-    const styleIcons: Record<VisualStyle, string> = { shaded: ICONS.styleShaded, shadedEdges: ICONS.styleEdges, wireframe: ICONS.styleWire };
+    /** Açılır menü düğmesi: ikon + küçük ▾. */
+    const menuBtn = (label: string, svg: string, items: () => MenuItem[]) => {
+      const b = h(
+        "button",
+        { class: "nbtn nbtn-menu", title: label, attrs: { "aria-label": label, "aria-haspopup": "menu", "aria-expanded": "false" } },
+        icon(svg),
+        h("span", { class: "nbtn-caret" }, icon(ICONS.chevronDown)),
+      );
+      b.addEventListener("click", () => openMenu(b, items(), { above: true }));
+      return b;
+    };
     const sep = () => h("span", { class: "nsep" });
+    const gridItem = (label: string): MenuItem => ({ label, icon: ICONS.grid, checked: vp.isGridVisible, run: () => vp.setGridVisible(!vp.isGridVisible) });
+    const displayItems = (): MenuItem[] => [
+      ...(Object.keys(STYLE_LABELS) as VisualStyle[]).map((s) => ({
+        label: STYLE_LABELS[s],
+        checked: vp.visualStyle === s,
+        run: () => vp.setVisualStyle(s),
+      })),
+      { separator: true, label: "" },
+      { label: "Perspektif", checked: vp.projection === "perspective", run: () => vp.setProjection("perspective") },
+      { label: "Ortografik", checked: vp.projection === "orthographic", run: () => vp.setProjection("orthographic") },
+      { separator: true, label: "" },
+      gridItem("Zemin Izgarası"),
+    ];
     this.navbar.replaceChildren(
       btn("Ana görünüm", ICONS.home, () => vp.setView("iso")),
+      sep(),
+      h(
+        "div",
+        { class: "ngroup", attrs: { role: "group", "aria-label": "Yakınlaştırma" } },
+        btn("Yakınlaştır", ICONS.zoomIn, () => vp.zoomBy(0.8)),
+        btn("Uzaklaştır", ICONS.zoomOut, () => vp.zoomBy(1.25)),
+      ),
+      sep(),
       btn("Görünüme sığdır (F)", ICONS.fit, () => vp.fit()),
       sep(),
-      btn(`Görsel stil: ${STYLE_LABELS[vp.visualStyle]}`, styleIcons[vp.visualStyle], (b) =>
-        openMenu(
-          b,
-          (Object.keys(STYLE_LABELS) as VisualStyle[]).map((s) => ({
-            label: STYLE_LABELS[s],
-            checked: vp.visualStyle === s,
-            run: () => vp.setVisualStyle(s),
-          })),
-          { above: true },
-        ),
-      ),
-      btn("Izgara (G)", ICONS.grid, () => vp.setGridVisible(!vp.isGridVisible), vp.isGridVisible),
-      sep(),
-      btn("Ölç (I)", ICONS.measure, () => void this.app.commands.run("inspect.measure"), this.measure.isActive),
-      btn("Kesit Analizi", ICONS.section, () => void this.app.commands.run("inspect.section"), this.section.isActive),
+      menuBtn("Görüntü Ayarları", ICONS.display, displayItems),
+      menuBtn("Izgara ve Yakalama", ICONS.grid, () => [gridItem("Izgarayı Göster")]),
     );
   }
 

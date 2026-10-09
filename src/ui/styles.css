@@ -772,17 +772,17 @@ kbd {
   position: absolute;
   top: 10px;
   right: 18px;
-  width: 98px;
-  height: 92px;
+  width: 124px;
+  height: 112px;
   z-index: 6;
 }
 
 .viewcube-stage {
   position: absolute;
-  top: 14px;
-  left: 18px;
-  width: 64px;
-  height: 64px;
+  top: 20px;
+  left: 24px;
+  width: 72px;
+  height: 72px;
 }
 
 .viewcube-cube {
@@ -794,8 +794,8 @@ kbd {
 .viewcube-face {
   position: absolute;
   inset: 0;
-  width: 64px;
-  height: 64px;
+  width: 72px;
+  height: 72px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -810,7 +810,39 @@ kbd {
 }
 
 .viewcube-face:hover {
-  background: color-mix(in srgb, var(--accent) 30%, var(--cube-face));
+  color: var(--text);
+}
+
+/* Kenar / köşe / yüz bölgesi vurgusu: imleç hangi tıklama bölgesindeyse o görünür. */
+.viewcube-zone {
+  position: absolute;
+  display: none;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.viewcube-zone[style] {
+  display: block;
+}
+
+.viewcube-more {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  width: 18px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-dim);
+}
+
+.viewcube-more:hover,
+.viewcube-more[aria-expanded="true"] {
+  background: var(--panel-bg);
   color: var(--text);
 }
 
@@ -872,6 +904,22 @@ kbd {
 .nbtn[aria-pressed="true"] {
   background: var(--select);
   color: var(--accent);
+}
+
+.ngroup {
+  display: flex;
+  gap: 1px;
+}
+
+.nbtn-menu {
+  width: 42px;
+  grid-auto-flow: column;
+  gap: 0;
+}
+
+.nbtn-caret .icon svg {
+  width: 10px;
+  height: 10px;
 }
 
 .nsep {

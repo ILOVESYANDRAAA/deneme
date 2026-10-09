@@ -358,7 +358,7 @@ test("Kes işlemi, ayna, ölçüm ve kesit analizi", async ({ page }) => {
   await expect(page.getByRole("dialog", { name: "Ölç" })).toBeHidden();
 
   // Kesit analizi
-  await page.locator(".navbar").getByRole("button", { name: "Kesit Analizi" }).click();
+  await page.getByRole("toolbar", { name: "Araçlar" }).getByRole("button", { name: "Kesit Analizi" }).click();
   await expect(page.getByRole("dialog", { name: "Kesit Analizi" })).toBeVisible();
   await page.getByLabel("Kesit düzlemi").selectOption("YZ");
   await page.screenshot({ path: `${S}/10-kesit.png` });
