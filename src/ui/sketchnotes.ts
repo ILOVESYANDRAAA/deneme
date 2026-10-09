@@ -1,5 +1,5 @@
 import type { SugarApp } from "../app/controller";
-import { DIMENSION_UNITS, constraintAnchor, dimensionAnchor, dimensionPrefix } from "../core/constrain";
+import { DIMENSION_UNITS, constraintAnchor, dimensionLayout, dimensionPrefix, type DimensionLayout } from "../core/constrain";
 import {
   CONSTRAINT_GLYPHS,
   CONSTRAINT_LABELS,
@@ -20,6 +20,20 @@ export function dimensionText(k: SConstraint): string {
   return k.expr ? `ƒ ${value}` : value;
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+/** Ölçü çizgisinin öğelerden varsayılan uzaklığı, ok boyu ve yarım genişliği (piksel). */
+const DIM_GAP_PX = 30;
+const ARROW_LEN = 10;
+const ARROW_HALF = 3.5;
+/** Oklar arası bundan darsa oklar ölçü çizgisinin dışına çevrilir. */
+const ARROW_FIT_PX = 3 * ARROW_LEN;
+
+function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<string, string> = {}): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
 /** İki eğriyi birbirine bağlayan kısıtların simgesi iki eğrinin üstünde de gösterilir. */
 const PAIR_CONSTRAINTS = new Set(["parallel", "perpendicular", "equal", "tangent", "concentric"]);
 
@@ -31,6 +45,8 @@ export class SketchNotes {
   readonly element: HTMLElement;
   /** Etiketler her çizimde yeniden kurulur; ölçü kutusu ise kendi yuvasında kalır ki yazılan değer ve odak kaybolmasın. */
   private readonly chips: HTMLElement;
+  /** Ölçü çizgileri, uzatma çizgileri ve oklar (etiketlerin altında). */
+  private readonly graphics: SVGSVGElement;
   private readonly editorSlot: HTMLElement;
   private editorKey = "";
 
@@ -40,8 +56,9 @@ export class SketchNotes {
     app: SugarApp,
   ) {
     this.chips = h("div", { class: "sketch-chips" });
+    this.graphics = svgEl("svg", { class: "sketch-dims", "aria-hidden": "true" });
     this.editorSlot = h("div", { class: "sketch-editor-slot" });
-    this.element = h("div", { class: "sketch-notes" }, this.chips, this.editorSlot);
+    this.element = h("div", { class: "sketch-notes" }, this.graphics, this.chips, this.editorSlot);
     this.element.hidden = true;
     viewport.element.append(this.element);
     const refresh = () => this.render();
@@ -55,6 +72,7 @@ export class SketchNotes {
     if (!sk.isActive) {
       this.element.hidden = true;
       this.chips.replaceChildren();
+      this.graphics.replaceChildren();
       this.editorSlot.replaceChildren();
       this.editorKey = "";
       return;
@@ -71,13 +89,21 @@ export class SketchNotes {
       el.style.top = `${s.y - host.top + dy}px`;
     };
     const kids: HTMLElement[] = [];
+    const drawn: SVGElement[] = [];
+    // Ölçü çizgisinin varsayılan uzaklığı ekranda sabit kalsın diye eskiz birimine yakınlaştırmaya göre çevrilir.
+    const gap = DIM_GAP_PX * this.viewport.worldPerPixel();
+    const screen = (p: Vec2): Vec2 => {
+      const s = this.viewport.screenPoint(plane, offset, p);
+      return [s.x - host.left, s.y - host.top];
+    };
     const conflicting = new Set(sk.solveInfo.conflicting);
     const stacked = new Map<string, number>();
     for (const k of d.constraints) {
       const selected = sk.selected.has(k.id);
       if (isDimension(k)) {
-        const a = dimensionAnchor(d, k);
-        if (!a) continue;
+        const layout = dimensionLayout(d, k, gap);
+        if (!layout) continue;
+        drawn.push(this.drawDimension(layout, screen, gap, `dim-graphic${selected ? " selected" : ""}${conflicting.has(k.id) ? " conflict" : ""}`));
         const chip = h(
           "button",
           {
@@ -85,6 +111,7 @@ export class SketchNotes {
             title: `${CONSTRAINT_LABELS[k.type]}${k.expr ? ` = ${k.expr}` : ""} — çift tıklayarak düzenleyin`,
             dataset: { constraint: k.id },
             attrs: { "aria-label": `${CONSTRAINT_LABELS[k.type]} ${dimensionText(k)}` },
+            onpointerdown: (e: PointerEvent) => this.dragLabel(e, k.id),
             onclick: (e: MouseEvent) => {
               e.stopPropagation();
               sk.selectItem(k.id, e.ctrlKey || e.metaKey || e.shiftKey);
@@ -100,7 +127,7 @@ export class SketchNotes {
           },
           dimensionText(k),
         );
-        place(chip, a);
+        place(chip, layout.label);
         kids.push(chip);
       } else if (sk.options.showConstraints) {
         for (let slot = 0; slot < (PAIR_CONSTRAINTS.has(k.type) ? 2 : 1); slot++) {
@@ -129,12 +156,72 @@ export class SketchNotes {
         }
       }
     }
+    // Yeni ölçünün önizlemesi: kutu açıkken ölçü çizgisi imleçle gezer.
+    const dr = sk.draft;
+    const choice = dr && !dr.editing ? dr.choices[dr.index] : null;
+    const preview = choice ? dimensionLayout(d, { type: choice.type, refs: choice.refs, offset: dr?.offset }, gap) : null;
+    if (preview) drawn.push(this.drawDimension(preview, screen, gap, "dim-graphic draft"));
+    this.graphics.replaceChildren(...drawn);
     this.chips.replaceChildren(...kids);
-    this.syncEditor(place);
+    this.syncEditor(place, gap);
+  }
+
+  /** Ölçüyü ekran uzayında çizer: uzatma / ölçü çizgileri ve oklar. Dar aralıkta oklar dışarıdan bakar. */
+  private drawDimension(layout: DimensionLayout, screen: (p: Vec2) => Vec2, gap: number, cls: string): SVGElement {
+    const g = svgEl("g", { class: cls });
+    const path = (pts: Vec2[]) => pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join("");
+    const tangent = (at: Vec2, dir: Vec2): Vec2 => {
+      const eps = gap / DIM_GAP_PX; // bir piksel
+      const a = screen(at);
+      const b = screen([at[0] + dir[0] * eps * 4, at[1] + dir[1] * eps * 4]);
+      const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      return [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    };
+    const strokes = layout.lines.map((l) => l.map(screen));
+    const [from, to] = layout.span ? layout.span.map(screen) : [null, null];
+    const cramped = !!from && !!to && Math.hypot(to[0] - from[0], to[1] - from[1]) < ARROW_FIT_PX;
+    const heads: string[] = [];
+    for (const arrow of layout.arrows) {
+      const tip = screen(arrow.at);
+      const dir = tangent(arrow.at, arrow.dir);
+      // Dar yerde ok ters çevrilir ve ucundan dışarı bir kuyruk çizgisi uzanır.
+      const sign = cramped ? -1 : 1;
+      const d: Vec2 = [dir[0] * sign, dir[1] * sign];
+      if (cramped) strokes.push([tip, [tip[0] - d[0] * ARROW_LEN * 2, tip[1] - d[1] * ARROW_LEN * 2]]);
+      const base: Vec2 = [tip[0] - d[0] * ARROW_LEN, tip[1] - d[1] * ARROW_LEN];
+      const n: Vec2 = [-d[1] * ARROW_HALF, d[0] * ARROW_HALF];
+      heads.push(`M${tip[0].toFixed(1)} ${tip[1].toFixed(1)}L${(base[0] + n[0]).toFixed(1)} ${(base[1] + n[1]).toFixed(1)}L${(base[0] - n[0]).toFixed(1)} ${(base[1] - n[1]).toFixed(1)}Z`);
+    }
+    g.append(svgEl("path", { class: "dim-line", d: strokes.map(path).join("") }));
+    if (heads.length) g.append(svgEl("path", { class: "dim-arrow", d: heads.join("") }));
+    return g;
+  }
+
+  /** Etiketi tutup sürükleyerek ölçü çizgisini taşır; kısa hareket tıklama sayılır. */
+  private dragLabel(e: PointerEvent, id: string): void {
+    const sk = this.sketcher;
+    if (e.button !== 0 || (sk.tool && sk.tool !== "dimension")) return;
+    const sx = e.clientX;
+    const sy = e.clientY;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+      moved = true;
+      sk.moveDimensionLabel(id, ev.clientX, ev.clientY);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      if (moved) sk.endDimensionLabelDrag();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   }
 
   /** Aynı ölçü için açık kutu yeniden kurulmaz (yalnızca konumu güncellenir); başka ölçüye geçilince yenisi açılır. */
-  private syncEditor(place: (el: HTMLElement, p: Vec2, dx?: number, dy?: number) => void): void {
+  private syncEditor(place: (el: HTMLElement, p: Vec2, dx?: number, dy?: number) => void, gap: number): void {
     const dr = this.sketcher.draft;
     if (!dr) {
       this.editorSlot.replaceChildren();
@@ -144,12 +231,11 @@ export class SketchNotes {
     const key = `${dr.items.join("+")}:${dr.index}:${dr.editing ?? ""}`;
     const current = this.editorSlot.firstElementChild as HTMLElement | null;
     if (current && this.editorKey === key) {
-      const choice = dr.choices[dr.index];
-      const anchor = dimensionAnchor(this.sketcher.data(), { id: "draft", type: choice.type, refs: choice.refs });
+      const anchor = this.editorAnchor(gap);
       if (anchor) place(current, anchor, 12, 12);
       return;
     }
-    const editor = this.renderEditor(place, key);
+    const editor = this.renderEditor(place, key, gap);
     this.editorSlot.replaceChildren(...(editor ? [editor] : []));
     this.editorKey = editor ? key : "";
     if (editor) {
@@ -160,7 +246,7 @@ export class SketchNotes {
   }
 
   /** Açık ölçü kutusu: tür seçimi (varsa), değer girişi, Tamam / İptal. */
-  private renderEditor(place: (el: HTMLElement, p: Vec2, dx?: number, dy?: number) => void, key: string): HTMLElement | null {
+  private renderEditor(place: (el: HTMLElement, p: Vec2, dx?: number, dy?: number) => void, key: string, gap: number): HTMLElement | null {
     const sk = this.sketcher;
     const dr = sk.draft;
     if (!dr) return null;
@@ -209,9 +295,21 @@ export class SketchNotes {
       e.preventDefault();
       submit();
     });
-    const anchor =
-      dimensionAnchor(sk.data(), { id: "draft", type: choice.type, refs: choice.refs }) ?? sk.data().points.map((p): Vec2 => [p.x, p.y])[0];
+    const anchor = this.editorAnchor(gap) ?? sk.data().points.map((p): Vec2 => [p.x, p.y])[0];
     if (anchor) place(box, anchor, 12, 12);
     return box;
+  }
+
+  /**
+   * Değer kutusunun yeri: var olan ölçüde etiketin yanı; yeni ölçüde ölçü çizgisi imleçle gezerken
+   * kutu yerinde kalır (fareyle ulaşılabilsin), yani ölçünün varsayılan etiket konumu.
+   */
+  private editorAnchor(gap: number): Vec2 | null {
+    const sk = this.sketcher;
+    const dr = sk.draft;
+    if (!dr) return null;
+    const choice = dr.choices[dr.index];
+    const existing = dr.editing ? sk.data().constraints.find((c) => c.id === dr.editing) : undefined;
+    return dimensionLayout(sk.data(), { type: choice.type, refs: choice.refs, offset: existing?.offset }, gap)?.label ?? null;
   }
 }

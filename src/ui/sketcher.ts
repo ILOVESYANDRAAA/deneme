@@ -2,7 +2,7 @@ import type { SugarApp } from "../app/controller";
 import { Emitter } from "../core/events";
 import { sketchDataOf, type Feature } from "../core/features";
 import { dist, niceStep, perp, planeKey, planeLabel, roundPoint, snapToGrid, type PlaneName, type PlaneRef } from "../core/sketch";
-import { planConstraint, planDimension, type DimensionChoice } from "../core/constrain";
+import { dimensionOffsetFor, planConstraint, planDimension, type DimensionChoice } from "../core/constrain";
 import {
   CONSTRAINT_LABELS,
   SketchEdit,
@@ -145,6 +145,9 @@ export interface DimensionDraft {
   index: number;
   /** Var olan bir ölçü düzenleniyorsa kimliği. */
   editing?: string;
+  /** Etiketin geometriden kayması: yeni ölçüde imleci izler, tıklanınca (`placed`) sabitlenir. */
+  offset?: Vec2;
+  placed?: boolean;
 }
 
 const SIGNED = new Set(["hdistance", "vdistance", "angle"]);
@@ -255,6 +258,8 @@ export class Sketcher implements PointerHandler {
 
   /** Sürükleme sırasında belgeye yazılmamış, çözülmüş geçici veri. */
   private live: SketchData | null = null;
+  /** Sürüklenen ölçü etiketi; `start`: sürükleme başındaki veri. */
+  private labelDrag: { start: SketchData } | null = null;
 
   private refreshSolveInfo(): void {
     const solver = this.app.solver;
@@ -322,6 +327,7 @@ export class Sketcher implements PointerHandler {
     this.dimPick = [];
     this.draft = null;
     if (tool) this.selected.clear();
+    this.syncViewOptions();
     this.updatePreview();
     this.onDidChange.fire();
   }
@@ -335,7 +341,9 @@ export class Sketcher implements PointerHandler {
 
   private syncViewOptions(): void {
     this.viewport.setSketchOptions({ grid: this.options.grid, profiles: this.options.showProfiles });
-    this.viewport.setSketchHighlight([...this.selected], this.hovered);
+    // Ölçü aracında seçilen öğeler (ölçü kutusu açıkken de) belli olsun.
+    const picked = this.draft?.editing ? [] : (this.draft?.items ?? this.dimPick);
+    this.viewport.setSketchHighlight([...new Set([...this.selected, ...picked])], this.hovered);
   }
 
   /** Eskizi kapatır. Yarım kalan çizgi en az iki noktalıysa açık çizgi olarak kaydedilir. */
@@ -546,10 +554,11 @@ export class Sketcher implements PointerHandler {
       return;
     }
     this.cursor = this.snap(e.clientX, e.clientY);
-    if (!this.tool || CURVE_TOOLS.has(this.tool)) {
+    this.floatDimension(e);
+    if (!this.tool || this.tool === "dimension" || CURVE_TOOLS.has(this.tool)) {
       const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
       const source = this.tool === "offset" && this.pending.length ? this.pendingIds[0] : null;
-      const hovered = source ?? (raw ? (this.tool ? this.hitCurveOnly(raw) : this.hit(raw)) : null);
+      const hovered = source ?? (raw ? (this.tool && this.tool !== "dimension" ? this.hitCurveOnly(raw) : this.hit(raw)) : null);
       if (hovered !== this.hovered) {
         this.hovered = hovered;
         this.syncViewOptions();
@@ -557,6 +566,16 @@ export class Sketcher implements PointerHandler {
     }
     this.updatePreview();
     this.onDidChange.fire();
+  }
+
+  /** Yeni ölçünün etiketi tıklanıp sabitlenene kadar imleci izler (ölçü çizgisi imleçle birlikte gezer). */
+  private floatDimension(e: PointerEvent): void {
+    const dr = this.draft;
+    if (this.tool !== "dimension" || !dr || dr.editing || dr.placed) return;
+    const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
+    const choice = dr.choices[dr.index];
+    const offset = raw && choice ? dimensionOffsetFor(this.data(), choice, raw) : null;
+    if (offset) this.draft = { ...dr, offset };
   }
 
   pointerLeave(): void {
@@ -589,6 +608,13 @@ export class Sketcher implements PointerHandler {
       return;
     }
     if (this.tool === "dimension") {
+      // Ölçü kutusu açıkken ilk tıklama etiketin yerini sabitler (Fusion'daki gibi).
+      if (this.draft && !this.draft.editing && !this.draft.placed) {
+        this.floatDimension(e);
+        this.draft = { ...this.draft, placed: true };
+        this.onDidChange.fire();
+        return;
+      }
       const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
       this.pickForDimension(raw ? this.hit(raw) : null);
       return;
@@ -827,6 +853,7 @@ export class Sketcher implements PointerHandler {
         this.reportError(e);
       } else this.dimPick = items; // ilk nokta: ikincisini bekle
     }
+    this.syncViewOptions();
     this.onDidChange.fire();
   }
 
@@ -835,12 +862,13 @@ export class Sketcher implements PointerHandler {
     const k = this.data().constraints.find((c) => c.id === id);
     if (!k || k.value === undefined) throw new Error("Bu bir ölçü değil");
     this.draft = { items: k.refs, choices: [{ type: k.type as DimensionChoice["type"], refs: k.refs, value: k.value }], index: 0, editing: id };
+    this.syncViewOptions();
     this.onDidChange.fire();
   }
 
   setDimensionChoice(index: number): void {
     if (this.draft && this.draft.choices[index]) {
-      this.draft = { ...this.draft, index };
+      this.draft = { ...this.draft, index, offset: undefined, placed: false };
       this.onDidChange.fire();
     }
   }
@@ -848,6 +876,7 @@ export class Sketcher implements PointerHandler {
   cancelDimension(): void {
     this.draft = null;
     this.dimPick = [];
+    this.syncViewOptions();
     this.onDidChange.fire();
   }
 
@@ -902,11 +931,12 @@ export class Sketcher implements PointerHandler {
       if (expr) k.expr = expr;
       else delete k.expr;
     } else {
-      ed.constrain(choice.type, choice.refs, { value: signed, ...(expr ? { expr } : {}) });
+      ed.constrain(choice.type, choice.refs, { value: signed, ...(expr ? { expr } : {}), ...(dr.offset ? { offset: dr.offset } : {}) });
     }
     if (!this.tryApply(ed)) return false;
     this.draft = null;
     this.dimPick = [];
+    this.syncViewOptions();
     this.onDidChange.fire();
     return true;
   }
@@ -925,6 +955,37 @@ export class Sketcher implements PointerHandler {
     if (expr) k.expr = expr;
     else delete k.expr;
     return this.tryApply(ed);
+  }
+
+  /** Ölçü etiketini sürüklerken canlı gösterir (belgeye yazılmaz); `endDimensionLabelDrag` ile kaydedilir. */
+  moveDimensionLabel(id: string, clientX: number, clientY: number): void {
+    const start = this.labelDrag?.start ?? structuredClone(this.data());
+    this.labelDrag ??= { start };
+    const k = start.constraints.find((c) => c.id === id);
+    const raw = this.viewport.planePoint(clientX, clientY, this.plane, this.offset);
+    const offset = k && raw ? dimensionOffsetFor(start, k, raw) : null;
+    if (!k || !offset) return;
+    const live = structuredClone(start);
+    live.constraints.find((c) => c.id === id)!.offset = offset;
+    this.live = live;
+    this.viewport.setLiveSketch(live);
+    this.onDidChange.fire();
+  }
+
+  endDimensionLabelDrag(): void {
+    const drag = this.labelDrag;
+    const data = this.live;
+    this.labelDrag = null;
+    this.live = null;
+    this.viewport.setLiveSketch(null);
+    const f = this.sketch();
+    if (!drag || !data || !f) return;
+    this.keepSelection = true;
+    try {
+      this.app.document.update(f.id, { sketchData: data });
+    } finally {
+      this.keepSelection = false;
+    }
   }
 
   // ---- yazılan ölçüler ----
@@ -1182,7 +1243,12 @@ export class Sketcher implements PointerHandler {
     let text: string;
     if (this.tool) {
       const info = TOOLS[this.tool];
-      const hint = info.hints[Math.min(this.pending.length, info.hints.length - 1)];
+      const dr = this.tool === "dimension" && this.draft && !this.draft.editing ? this.draft : null;
+      const hint = dr
+        ? dr.placed
+          ? "Değeri yazıp Enter'a basın (Esc: vazgeç)"
+          : "Etiketi yerleştirmek için tıklayın · ya da değeri yazıp Enter'a basın"
+        : info.hints[Math.min(this.pending.length, info.hints.length - 1)];
       const typing = this.fieldKeys().length ? " · ölçü yazmak için rakam girin" : "";
       text = `${info.label}: ${hint}${typing}`;
     } else if (this.selected.size) {

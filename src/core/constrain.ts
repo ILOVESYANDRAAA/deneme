@@ -256,68 +256,225 @@ export function dimensionPrefix(type: DimensionType): string {
   return type === "diameter" ? "⌀" : type === "radius" ? "R" : "";
 }
 
-/** Ölçü etiketinin bağlandığı nokta (eskiz koordinatlarında), kaydırma dahil. */
-export function dimensionAnchor(d: SketchData, k: SConstraint): Vec2 | null {
+/**
+ * Bir ölçünün çizimi (eskiz koordinatlarında): uzatma + ölçü çizgileri, oklar ve etiket.
+ * Ölçü etiketi `base + offset` konumundadır; `offset` yoksa ölçü çizgisi öğelerden `gap` kadar
+ * uzağa kurulur (ekranda sabit bir mesafe olsun diye çağıran, yakınlaştırmaya göre verir).
+ */
+export interface DimensionLayout {
+  lines: Vec2[][];
+  /** `at`: okun ucu (çizginin ucu), `dir`: okun baktığı birim yön. */
+  arrows: { at: Vec2; dir: Vec2 }[];
+  /** Etiketin merkezi. */
+  label: Vec2;
+  /** Doğrusal ölçülerde oklar arası; ekranda darsa oklar ölçü çizgisinin dışına çevrilir. */
+  span?: [Vec2, Vec2];
+}
+
+const vadd = (a: Vec2, b: Vec2): Vec2 => [a[0] + b[0], a[1] + b[1]];
+const vsub = (a: Vec2, b: Vec2): Vec2 => [a[0] - b[0], a[1] - b[1]];
+const vmul = (a: Vec2, s: number): Vec2 => [a[0] * s, a[1] * s];
+const vdot = (a: Vec2, b: Vec2) => a[0] * b[0] + a[1] * b[1];
+const vlen = (a: Vec2) => Math.hypot(a[0], a[1]);
+const vunit = (a: Vec2, fallback: Vec2 = [1, 0]): Vec2 => {
+  const l = vlen(a);
+  return l < 1e-12 ? fallback : [a[0] / l, a[1] / l];
+};
+
+/** İki çizginin kesişimi (paralelse null). */
+function lineIntersection(p: Vec2, v: Vec2, q: Vec2, w: Vec2): Vec2 | null {
+  const cross = v[0] * w[1] - v[1] * w[0];
+  if (Math.abs(cross) < 1e-9 * vlen(v) * vlen(w)) return null;
+  const t = ((q[0] - p[0]) * w[1] - (q[1] - p[1]) * w[0]) / cross;
+  return vadd(p, vmul(v, t));
+}
+
+interface DimensionFrame {
+  /** Etiket konumu = base + offset. */
+  base: Vec2;
+  /** Ofset verilmezse kullanılacak varsayılan (gap eskiz birimi). */
+  fallback: (gap: number) => Vec2;
+  /** Ofset verilince çizimi kurar. */
+  build: (offset: Vec2, gap: number) => DimensionLayout;
+}
+
+/** Doğrusal ölçü: a–b ölçülür; ölçü çizgisi a2–b2, uzatma çizgileri a–a2 ve b–b2. */
+function linearLayout(a: Vec2, b: Vec2, a2: Vec2, b2: Vec2, label: Vec2, gap: number): DimensionLayout {
+  const lines: Vec2[][] = [[a2, b2]];
+  // Uzatma çizgisi ölçü çizgisini biraz aşar.
+  for (const [from, to] of [[a, a2], [b, b2]] as const) {
+    const run = vsub(to, from);
+    if (vlen(run) > 1e-9) lines.push([from, vadd(to, vmul(vunit(run), gap * 0.25))]);
+  }
+  const arrows: DimensionLayout["arrows"] = [];
+  if (vlen(vsub(b2, a2)) > 1e-9) {
+    arrows.push({ at: a2, dir: vunit(vsub(a2, b2)) }, { at: b2, dir: vunit(vsub(b2, a2)) });
+  }
+  return { lines, arrows, label, span: [a2, b2] };
+}
+
+/** Çember / yay ölçüsü: merkezden `offset` yönünde, etikete uzanan çizgi. */
+function radialLayout(c: Vec2, r: number, offset: Vec2, diameter: boolean): DimensionLayout {
+  const dir = vunit(offset, [Math.SQRT1_2, Math.SQRT1_2]);
+  const reach = Math.max(vlen(offset), r);
+  const rim = vadd(c, vmul(dir, r));
+  const arrows = [{ at: rim, dir }];
+  const from = diameter ? vsub(c, vmul(dir, r)) : c;
+  if (diameter) arrows.push({ at: from, dir: vmul(dir, -1) });
+  return { lines: [[from, vadd(c, vmul(dir, reach))]], arrows, label: vadd(c, offset) };
+}
+
+function dimensionFrame(d: SketchData, k: Pick<SConstraint, "type" | "refs">): DimensionFrame | null {
   const pm = pointMap(d);
-  const off: Vec2 = k.offset ?? [0, 0];
-  let base: Vec2 | null = null;
+  // Ölçü çizgisi varsayılan olarak şeklin dışına (merkezden uzağa) kurulur.
+  const n = d.points.length || 1;
+  const centroid: Vec2 = [d.points.reduce((s, p) => s + p.x, 0) / n, d.points.reduce((s, p) => s + p.y, 0) / n];
+  const outward = (from: Vec2, dir: Vec2): Vec2 => (vdot(vsub(from, centroid), dir) < -1e-9 ? vmul(dir, -1) : dir);
   switch (k.type) {
     case "distance":
     case "hdistance":
     case "vdistance": {
       const a = pm.get(k.refs[0]);
       const b = pm.get(k.refs[1]);
-      if (a && b) base = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      break;
+      if (!a || !b) return null;
+      const mid: Vec2 = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (k.type === "hdistance") {
+        return {
+          base: mid,
+          fallback: (gap) => vmul(outward(mid, [0, 1]), Math.abs(a[1] - b[1]) / 2 + gap),
+          build: (o, gap) => linearLayout(a, b, [a[0], mid[1] + o[1]], [b[0], mid[1] + o[1]], vadd(mid, o), gap),
+        };
+      }
+      if (k.type === "vdistance") {
+        return {
+          base: mid,
+          fallback: (gap) => vmul(outward(mid, [1, 0]), Math.abs(a[0] - b[0]) / 2 + gap),
+          build: (o, gap) => linearLayout(a, b, [mid[0] + o[0], a[1]], [mid[0] + o[0], b[1]], vadd(mid, o), gap),
+        };
+      }
+      const u = vunit(vsub(b, a));
+      const nrm: Vec2 = [-u[1], u[0]];
+      return {
+        base: mid,
+        fallback: (gap) => vmul(outward(mid, nrm), gap),
+        build: (o, gap) => {
+          const shift = vmul(nrm, vdot(o, nrm));
+          return linearLayout(a, b, vadd(a, shift), vadd(b, shift), vadd(mid, o), gap);
+        },
+      };
     }
     case "pointLine": {
       const p = pm.get(k.refs[0]);
       const l = curveById(d, k.refs[1]);
-      if (p && l?.kind === "line") {
-        const a = pm.get(l.p1)!;
-        const b = pm.get(l.p2)!;
-        const t = ((p[0] - a[0]) * (b[0] - a[0]) + (p[1] - a[1]) * (b[1] - a[1])) / (Math.hypot(b[0] - a[0], b[1] - a[1]) ** 2 || 1);
-        const foot: Vec2 = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-        base = [(p[0] + foot[0]) / 2, (p[1] + foot[1]) / 2];
-      }
-      break;
+      if (!p || l?.kind !== "line") return null;
+      const a = pm.get(l.p1)!;
+      const b = pm.get(l.p2)!;
+      const u = vunit(vsub(b, a));
+      const foot = vadd(a, vmul(u, vdot(vsub(p, a), u)));
+      const mid: Vec2 = [(p[0] + foot[0]) / 2, (p[1] + foot[1]) / 2];
+      return {
+        base: mid,
+        fallback: (gap) => vmul(u, gap),
+        build: (o, gap) => {
+          const shift = vmul(u, vdot(o, u));
+          return linearLayout(p, foot, vadd(p, shift), vadd(foot, shift), vadd(mid, o), gap);
+        },
+      };
     }
     case "radius":
     case "diameter": {
       const c = curveById(d, k.refs[0]);
-      if (c?.kind === "circle") base = [pm.get(c.c)![0] + c.r * Math.SQRT1_2, pm.get(c.c)![1] + c.r * Math.SQRT1_2];
-      else if (c?.kind === "arc") {
+      const diameter = k.type === "diameter";
+      if (c?.kind === "circle") {
+        const center = pm.get(c.c)!;
+        const dir: Vec2 = [Math.SQRT1_2, Math.SQRT1_2];
+        return { base: center, fallback: (gap) => vmul(dir, c.r + gap), build: (o) => radialLayout(center, c.r, o, diameter) };
+      }
+      if (c?.kind === "arc") {
         const g = arcInfo(pm.get(c.c)!, pm.get(c.s)!, pm.get(c.e)!);
         const mid = g.a0 + g.sweep / 2;
-        base = [g.c[0] + g.r * Math.cos(mid), g.c[1] + g.r * Math.sin(mid)];
+        const dir: Vec2 = [Math.cos(mid), Math.sin(mid)];
+        return { base: g.c, fallback: (gap) => vmul(dir, g.r + gap), build: (o) => radialLayout(g.c, g.r, o, diameter) };
       }
-      break;
+      return null;
     }
     case "angle": {
       const l1 = curveById(d, k.refs[0]);
       const l2 = curveById(d, k.refs[1]);
-      if (l1?.kind === "line" && l2?.kind === "line") {
-        const pts = [l1.p1, l1.p2, l2.p1, l2.p2].map((id) => pm.get(id)!);
-        // İki çizginin birbirine en yakın uçlarının ortası.
-        let best: [Vec2, Vec2] = [pts[0], pts[2]];
+      if (l1?.kind !== "line" || l2?.kind !== "line") return null;
+      const [a1, b1, a2, b2] = [l1.p1, l1.p2, l2.p1, l2.p2].map((id) => pm.get(id)!);
+      const v1 = vsub(b1, a1);
+      const v2 = vsub(b2, a2);
+      if (vlen(v1) < 1e-12 || vlen(v2) < 1e-12) return null;
+      let apex = lineIntersection(a1, v1, a2, v2);
+      if (!apex) {
+        // Paralel çizgiler: birbirine en yakın uçların ortası.
+        let best: [Vec2, Vec2] = [a1, a2];
         let bestD = Infinity;
-        for (const a of pts.slice(0, 2)) {
-          for (const b of pts.slice(2)) {
-            const dd = Math.hypot(a[0] - b[0], a[1] - b[1]);
+        for (const p of [a1, b1]) {
+          for (const q of [a2, b2]) {
+            const dd = vlen(vsub(p, q));
             if (dd < bestD) {
               bestD = dd;
-              best = [a, b];
+              best = [p, q];
             }
           }
         }
-        base = [(best[0][0] + best[1][0]) / 2, (best[0][1] + best[1][1]) / 2];
+        apex = [(best[0][0] + best[1][0]) / 2, (best[0][1] + best[1][1]) / 2];
       }
-      break;
+      const origin = apex;
+      const theta = Math.atan2(v1[1], v1[0]);
+      const sweep = Math.atan2(v1[0] * v2[1] - v1[1] * v2[0], vdot(v1, v2));
+      const bisector = theta + sweep / 2;
+      return {
+        base: origin,
+        fallback: (gap) => [Math.cos(bisector) * gap * 3, Math.sin(bisector) * gap * 3],
+        build: (o, gap) => {
+          const R = Math.max(vlen(o), gap * 1.2);
+          const steps = Math.max(2, Math.ceil(Math.abs(sweep) / (Math.PI / 36)));
+          const arc: Vec2[] = [];
+          for (let i = 0; i <= steps; i++) {
+            const t = theta + (sweep * i) / steps;
+            arc.push([origin[0] + R * Math.cos(t), origin[1] + R * Math.sin(t)]);
+          }
+          const lines: Vec2[][] = [arc];
+          // Çizgiler yayın yarıçapına varmıyorsa yay çizgilere uzatma çizgisiyle bağlanır.
+          for (const [dir, ends] of [
+            [vunit(v1), [a1, b1]],
+            [vunit(v2), [a2, b2]],
+          ] as const) {
+            const reach = Math.max(0, ...ends.map((e) => vdot(vsub(e, origin), dir)));
+            if (reach < R) lines.push([vadd(origin, vmul(dir, reach)), vadd(origin, vmul(dir, R))]);
+          }
+          const tangent = (t: number): Vec2 => vmul([-Math.sin(t), Math.cos(t)], Math.sign(sweep) || 1);
+          const arrows = [
+            { at: arc[0], dir: vmul(tangent(theta), -1) },
+            { at: arc[steps], dir: tangent(theta + sweep) },
+          ];
+          return { lines, arrows, label: vadd(origin, o) };
+        },
+      };
     }
     default:
       return null;
   }
-  return base ? [base[0] + off[0], base[1] + off[1]] : null;
+}
+
+/** Ölçünün çizimi; `gap`: ölçü çizgisinin öğelerden varsayılan uzaklığı (eskiz birimi). Çizilemiyorsa null. */
+export function dimensionLayout(d: SketchData, k: Pick<SConstraint, "type" | "refs" | "offset">, gap: number): DimensionLayout | null {
+  const frame = dimensionFrame(d, k);
+  return frame ? frame.build(k.offset ?? frame.fallback(gap), gap) : null;
+}
+
+/** Etiket `point`'e gelsin diye `offset` ne olmalı? (etiketi sürüklemek için) */
+export function dimensionOffsetFor(d: SketchData, k: Pick<SConstraint, "type" | "refs">, point: Vec2): Vec2 | null {
+  const frame = dimensionFrame(d, k);
+  return frame ? [Number((point[0] - frame.base[0]).toFixed(6)) + 0, Number((point[1] - frame.base[1]).toFixed(6)) + 0] : null;
+}
+
+/** Ölçü etiketinin merkezi (eskiz koordinatlarında). */
+export function dimensionAnchor(d: SketchData, k: Pick<SConstraint, "type" | "refs" | "offset">, gap = 0): Vec2 | null {
+  return dimensionLayout(d, k, gap)?.label ?? null;
 }
 
 /** Geometrik kısıt simgesinin konumu (eskiz koordinatlarında); gösterilemiyorsa null. */

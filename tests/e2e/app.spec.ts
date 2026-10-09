@@ -379,6 +379,64 @@ const bounds = async (page: Page) => {
 const pts = async (page: Page) => (await sketchData(page)).points.map((p: any) => [p.x, p.y]);
 const constraintTypes = async (page: Page) => (await sketchData(page)).constraints.map((k: any) => k.type).sort();
 
+test("ölçü görünür: ölçü çizgisi ve oklar çizilir, önizleme imleçle gezer, tıklayınca yerleşir, etiket sürüklenir", async ({ page }) => {
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [30, 20]);
+
+  await page.keyboard.press("d");
+  await clickSketch(page, [15, 20]);
+  const editor = page.getByRole("group", { name: "Ölçü" });
+  await expect(editor).toBeVisible();
+  // Kutu açıkken ölçü çizgisi + oklar önizlenir (kesikli), seçilen kenar vurgulanır.
+  const draft = page.locator(".sketch-dims .dim-graphic.draft");
+  await expect(draft.locator(".dim-line")).toHaveCount(1);
+  await expect(draft.locator(".dim-arrow")).toHaveCount(1);
+  const before = await draft.locator(".dim-line").getAttribute("d");
+  // İmleç yukarı çekilince ölçü çizgisi onunla gelir.
+  await page.evaluate(() => {
+    const ui = (window as any).sugarcadUi;
+    const s = ui.viewport.screenPoint(ui.sketcher.plane, 0, [15, 32]);
+    ui.sketcher.pointerMove({ clientX: s.x, clientY: s.y, buttons: 0 });
+  });
+  await expect.poll(() => draft.locator(".dim-line").getAttribute("d")).not.toBe(before);
+  // Tıklayınca etiket yerinde sabitlenir; değer yazılıp Enter ile ölçü kaydolur.
+  const spot = await page.evaluate(() => {
+    const ui = (window as any).sugarcadUi;
+    return ui.viewport.screenPoint(ui.sketcher.plane, 0, [15, 32]);
+  });
+  await page.mouse.move(spot.x, spot.y);
+  await page.mouse.click(spot.x, spot.y);
+  await expect(page.locator(".statusbar")).toContainText("Değeri yazıp Enter");
+  await editor.getByRole("textbox").fill("40");
+  await page.keyboard.press("Enter");
+  await expect(editor).toBeHidden();
+  await expect(draft).toHaveCount(0);
+
+  // Kalıcı ölçü çizilir ve etiket, yerleştirdiğimiz yerde kayıtlıdır.
+  await expect(page.locator(".sketch-dims .dim-graphic:not(.draft) .dim-arrow")).toHaveCount(1);
+  let k = (await sketchData(page)).constraints.find((c: any) => c.type === "distance");
+  expect(k.offset).toBeTruthy();
+  expect(Math.abs(k.offset[1])).toBeGreaterThan(5); // 20'deki kenardan yukarıdaki etikete
+  await page.screenshot({ path: `${S}/14-olcu-cizgisi.png` });
+
+  // Etiketi tutup başka yere sürükle.
+  await page.keyboard.press("Escape");
+  const chip = page.locator(".sketch-notes .note.dim");
+  const box = (await chip.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 80, { steps: 6 });
+  await page.mouse.up();
+  const moved = (await sketchData(page)).constraints.find((c: any) => c.type === "distance");
+  expect(moved.offset[1]).toBeLessThan(k.offset[1] - 3);
+  expect(moved.value).toBeCloseTo(40, 3); // yalnızca etiket kaydı, ölçü değeri aynı
+  expect(errors).toEqual([]);
+});
+
 test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitleme ve tam tanımlı durum", async ({ page }) => {
   const errors = await open(page);
   await expect(page.locator("body[data-solver=true]")).toBeAttached();

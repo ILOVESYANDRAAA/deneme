@@ -1,6 +1,6 @@
 import { init_planegcs_module } from "@salusoft89/planegcs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { dimensionAnchor, constraintAnchor, measureDimension, planConstraint, planDimension } from "../../src/core/constrain";
+import { dimensionAnchor, dimensionLayout, dimensionOffsetFor, constraintAnchor, measureDimension, planConstraint, planDimension } from "../../src/core/constrain";
 import { SketchSolver } from "../../src/core/solver";
 import { SketchEdit, buildPolyline, type SketchData } from "../../src/core/sketchmodel";
 
@@ -152,6 +152,77 @@ describe("ölçü planlama", () => {
     const h = s.ed.constrain("horizontal", [s.l1]);
     const hk = s.ed.d.constraints.find((c) => c.id === h)!;
     expect(constraintAnchor(s.ed.d, hk)).toEqual([5, 0.5]);
+  });
+});
+
+describe("ölçü çizimi (Fusion tarzı ölçü çizgisi, uzatma çizgileri, oklar)", () => {
+  const near = (a: number[], b: number[]) => a.forEach((v, i) => expect(v).toBeCloseTo(b[i], 6));
+
+  it("doğrusal ölçü: ölçü çizgisi öğeden gap kadar uzakta, iki uzatma çizgisi ve iki ok", () => {
+    const ed = new SketchEdit();
+    const [a, b] = [ed.point([0, 0]), ed.point([10, 0])];
+    const lay = dimensionLayout(ed.d, { type: "distance", refs: [a, b] }, 4)!;
+    near(lay.label, [5, 4]);
+    expect(lay.lines).toHaveLength(3);
+    near(lay.lines[0][0], [0, 4]);
+    near(lay.lines[0][1], [10, 4]);
+    // Uzatma çizgileri ölçü çizgisini biraz aşar.
+    near(lay.lines[1][0], [0, 0]);
+    expect(lay.lines[1][1][1]).toBeGreaterThan(4);
+    // Oklar uçlarda ve dışarı bakar (gövdeleri çizginin içinde kalır).
+    expect(lay.arrows).toHaveLength(2);
+    near(lay.arrows[0].at, [0, 4]);
+    near(lay.arrows[0].dir, [-1, 0]);
+    near(lay.arrows[1].dir, [1, 0]);
+  });
+
+  it("yatay / dikey ölçü eksene paralel çizilir", () => {
+    const ed = new SketchEdit();
+    const [a, b] = [ed.point([0, 0]), ed.point([10, 6])];
+    const h = dimensionLayout(ed.d, { type: "hdistance", refs: [a, b] }, 2)!;
+    // Ölçü çizgisi, iki noktanın yükseğinin (6) gap (2) kadar üstünde.
+    near(h.lines[0][0], [0, 8]);
+    near(h.lines[0][1], [10, 8]);
+    const v = dimensionLayout(ed.d, { type: "vdistance", refs: [a, b] }, 2)!;
+    near(v.lines[0][0], [12, 0]);
+    near(v.lines[0][1], [12, 6]);
+  });
+
+  it("çap / yarıçap: merkezden etikete uzanan çizgi, çember üzerinde ok(lar)", () => {
+    const ed = new SketchEdit();
+    const c = ed.circle(ed.point([0, 0]), 5);
+    const dia = dimensionLayout(ed.d, { type: "diameter", refs: [c] }, 3)!;
+    expect(dia.arrows).toHaveLength(2);
+    near(dia.arrows[0].at, [5 * Math.SQRT1_2, 5 * Math.SQRT1_2]);
+    near(dia.arrows[1].at, [-5 * Math.SQRT1_2, -5 * Math.SQRT1_2]);
+    const rad = dimensionLayout(ed.d, { type: "radius", refs: [c], offset: [0, 9] }, 3)!;
+    expect(rad.arrows).toHaveLength(1);
+    near(rad.arrows[0].at, [0, 5]);
+    near(rad.label, [0, 9]);
+    near(rad.lines[0][1], [0, 9]);
+  });
+
+  it("açı: tepe noktası çizgilerin kesişimi, yay iki çizgi arasında", () => {
+    const ed = new SketchEdit();
+    const [o, x, y] = [ed.point([0, 0]), ed.point([5, 0]), ed.point([0, 5])];
+    const lay = dimensionLayout(ed.d, { type: "angle", refs: [ed.line(o, x), ed.line(o, y)] }, 2)!;
+    const arc = lay.lines[0];
+    near(arc[0], [6, 0]);
+    near(arc[arc.length - 1], [0, 6]);
+    // Çizgiler yayın yarıçapına varmadığı için uzatma çizgileri eklenir.
+    expect(lay.lines).toHaveLength(3);
+    expect(lay.arrows).toHaveLength(2);
+  });
+
+  it("etiketi sürüklemek: offset, etiketi istenen yere getirir", () => {
+    const ed = new SketchEdit();
+    const [a, b] = [ed.point([0, 0]), ed.point([10, 0])];
+    const refs = [a, b];
+    const offset = dimensionOffsetFor(ed.d, { type: "distance", refs }, [7, -3])!;
+    near(dimensionLayout(ed.d, { type: "distance", refs, offset }, 4)!.label, [7, -3]);
+    // Eksi tarafa sürüklenince ölçü çizgisi de o tarafa geçer.
+    near(dimensionLayout(ed.d, { type: "distance", refs, offset }, 4)!.lines[0][0], [0, -3]);
+    expect(dimensionOffsetFor(ed.d, { type: "distance", refs: ["yok", b] }, [0, 0])).toBeNull();
   });
 });
 

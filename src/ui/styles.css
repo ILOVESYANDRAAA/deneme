@@ -1368,6 +1368,49 @@ select:focus {
   z-index: 4;
 }
 
+/* Ölçü çizgileri, uzatma çizgileri ve oklar (etiketlerin altında). */
+.sketch-notes .sketch-dims {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.sketch-dims .dim-graphic {
+  color: color-mix(in srgb, var(--accent) 85%, var(--text));
+}
+
+.sketch-dims .dim-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+
+.sketch-dims .dim-arrow {
+  fill: currentColor;
+  stroke: none;
+}
+
+.sketch-dims .dim-graphic.selected {
+  color: var(--text);
+}
+
+.sketch-dims .dim-graphic.selected .dim-line {
+  stroke-width: 1.8;
+}
+
+.sketch-dims .dim-graphic.conflict {
+  color: var(--danger);
+}
+
+/* Yerleştirilmeyi bekleyen yeni ölçü: kesikli önizleme. */
+.sketch-dims .dim-graphic.draft .dim-line {
+  stroke-dasharray: 5 3;
+}
+
 .sketch-notes .note {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -1389,6 +1432,7 @@ select:focus {
 .sketch-notes .note.dim {
   border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
   font-size: 12px;
+  cursor: grab;
 }
 
 .sketch-notes .note.glyph {
