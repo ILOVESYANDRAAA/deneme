@@ -1864,4 +1864,136 @@ body[data-feature-dialog] [data-panel="properties"] {
 
 .btn.finish:hover {
   filter: brightness(1.08);
+
+/* ---- işaretleme menüsü ---- */
+.mm {
+  position: fixed;
+  z-index: 45;
+  /* Merkez noktası; dilimler buna göre konumlanır (1px: erişilebilirlik ağacında görünür kalsın). */
+  width: 1px;
+  height: 1px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* Dilimleri bir arada gösteren soluk halka (tıklamaları engellemez). */
+.mm::before {
+  content: "";
+  position: absolute;
+  left: -110px;
+  top: -110px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  border: 1px dashed var(--border-strong);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.mm-hub {
+  position: absolute;
+  left: -14px;
+  top: -14px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
+.mm-slice {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+}
+
+/* Doğu dilimleri dışa doğru uzar, batı dilimleri sağ kenarından hizalanır. */
+.mm-ne,
+.mm-e,
+.mm-se {
+  transform: translate(-12px, -50%);
+}
+
+.mm-nw,
+.mm-w,
+.mm-sw {
+  transform: translate(calc(-100% + 12px), -50%);
+}
+
+.mm-slice:hover:not(:disabled),
+.mm-slice:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--select);
+}
+
+.mm-slice:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow);
+}
+
+.mm-slice:disabled,
+.mm-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mm-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  color: var(--text-dim);
+}
+
+.mm-list {
+  position: absolute;
+  left: 0;
+  top: 152px;
+  min-width: 200px;
+  padding: 4px;
+  transform: translateX(-50%);
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+.mm-item {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.mm-item:hover:not(:disabled),
+.mm-item:focus {
+  outline: none;
+  background: var(--select);
+}
+
+.mm-key {
+  font: 11px var(--mono);
+  color: var(--text-dim);
 }

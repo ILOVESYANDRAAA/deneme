@@ -16,6 +16,7 @@ import { compact, h, icon, isTextInput } from "./dom";
 import { ExtensionsPanel } from "./extensions";
 import { ICONS, iconForType } from "./icons";
 import { MeasureTool, SectionTool } from "./inspect";
+import { MarkingMenu } from "./markingmenu";
 import { closeMenus, isMenuOpen, openMenu, type MenuItem } from "./menu";
 import { CommandPalette } from "./palette";
 import { PanelHost } from "./panels";
@@ -234,6 +235,7 @@ export class Workbench {
     this.registerSketchCommands();
     this.registerInspectCommands();
     this.registerBrepCommands();
+    new MarkingMenu(app, this);
     this.renderAll();
 
     app.commands.onDidChange.on(() => this.renderRibbon());

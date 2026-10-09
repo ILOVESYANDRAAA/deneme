@@ -172,6 +172,8 @@ export class Viewport {
   readonly onDidChangeCamera = new Emitter<void>();
   /** Görsel stil, ızgara ya da kesit ayarı değişince. */
   readonly onDidChangeDisplay = new Emitter<void>();
+  /** Sürüklemesiz sağ tık (işaretleme menüsü dinler); sağ sürükleme kaydırmaya devam eder. */
+  readonly onContextClick = new Emitter<{ clientX: number; clientY: number }>();
 
   constructor(private readonly app: SugarApp) {
     this.hint = h(
@@ -211,6 +213,7 @@ export class Viewport {
 
     this.buildScene();
     this.bindPointer();
+    this.bindContextClick();
 
     new ResizeObserver(() => this.resize()).observe(this.element);
 
@@ -327,6 +330,22 @@ export class Viewport {
     canvas.addEventListener("dblclick", (e) => {
       if (this.interaction) this.interaction.doubleClick(e);
       else if (!this.planePicker) this.fit();
+    });
+  }
+
+  /** Sağ tuş: <5px hareketle bırakılırsa bağlam menüsü; tarayıcı menüsü hiç açılmaz. */
+  private bindContextClick(): void {
+    const canvas = this.renderer.domElement;
+    let rdown: { x: number; y: number } | null = null;
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    canvas.addEventListener("pointerdown", (e) => {
+      if (e.button === 2) rdown = { x: e.clientX, y: e.clientY };
+    });
+    canvas.addEventListener("pointerup", (e) => {
+      if (e.button !== 2 || !rdown) return;
+      const moved = Math.hypot(e.clientX - rdown.x, e.clientY - rdown.y);
+      rdown = null;
+      if (moved < 5 && !this.planePicker) this.onContextClick.fire({ clientX: e.clientX, clientY: e.clientY });
     });
   }
 
