@@ -233,7 +233,24 @@ export class Viewport {
     (grid.material as THREE.Material).opacity = 0.7;
     const axes = new THREE.AxesHelper(40);
     axes.position.z = 0.01;
+    axes.visible = this.originVisible;
+    this.originAxes = axes;
     this.ground.add(grid, axes);
+  }
+
+  // ---- Orijin görünürlüğü (Tarayıcı'daki Orijin göz anahtarı) ----
+  private originVisible = true;
+  private originAxes: THREE.Object3D | null = null;
+
+  get isOriginVisible(): boolean {
+    return this.originVisible;
+  }
+
+  /** Orijin eksenlerini gösterir/gizler; ızgaradan bağımsızdır. */
+  setOriginVisible(visible: boolean): void {
+    this.originVisible = visible;
+    if (this.originAxes) this.originAxes.visible = visible;
+    this.requestRender();
   }
 
   get currentTheme(): Theme {

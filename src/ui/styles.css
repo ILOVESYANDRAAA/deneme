@@ -619,6 +619,29 @@ kbd {
   cursor: pointer;
 }
 
+.tree-info,
+.tree-view {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding-right: 6px;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.tree-view {
+  cursor: pointer;
+}
+
+.tree-view:hover {
+  background: var(--bg-hover);
+}
+
+.tree-info .count {
+  font-size: 11px;
+}
+
 .tree-doc {
   padding-left: 8px;
   font-weight: 600;
@@ -678,7 +701,8 @@ kbd {
   color: var(--danger);
 }
 
-.tree-row .eye {
+.tree-row .eye,
+.tree-folder .eye {
   border: 0;
   background: none;
   padding: 2px;
@@ -689,11 +713,14 @@ kbd {
 }
 
 .tree-row:hover .eye,
-.tree-row .eye[aria-pressed="false"] {
+.tree-folder:hover .eye,
+.tree-row .eye[aria-pressed="false"],
+.tree-folder .eye[aria-pressed="false"] {
   opacity: 1;
 }
 
-.tree-row .eye:hover {
+.tree-row .eye:hover,
+.tree-folder .eye:hover {
   background: var(--bg-active);
 }
 

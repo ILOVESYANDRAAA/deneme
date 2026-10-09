@@ -1360,3 +1360,39 @@ test("çalışma alanı menüsü: Tasarım işaretli, diğerleri devre dışı, 
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
 });
+
+test("tarayıcı: klasör göz anahtarları, Orijin, Belge Ayarları ve adlandırılmış görünümler", async ({ page }, info) => {
+  const errors = await open(page);
+  await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    app.createSketch("XY");
+    app.createSketch("XZ");
+  });
+  const hiddenCount = () => page.evaluate(() => (window as any).sugarcad.document.all().filter((f: any) => f.hidden).length);
+  const eye = page.locator('.tree-folder[data-folder="sketches"] .eye');
+  await eye.click();
+  expect(await hiddenCount()).toBe(2);
+  // Toplu gizleme tek geri alma adımıdır.
+  await page.evaluate(() => (window as any).sugarcad.document.undo());
+  expect(await hiddenCount()).toBe(0);
+  await eye.click();
+  await eye.click();
+  expect(await hiddenCount()).toBe(0);
+
+  await expect(page.locator(".tree-info")).toContainText("Birimler: mm");
+  await page.locator('.tree-folder[data-folder="views"]').click();
+  await expect(page.locator(".tree-view")).toHaveText(["Ev", "Ön", "Üst", "Sağ"]);
+  await page.locator('.tree-view[data-view="top"]').click();
+  const m = await page.evaluate(() => (window as any).sugarcadUi.viewport.viewRotation());
+  expect(m.length).toBe(16);
+
+  const originEye = page.locator('.tree-folder[data-folder="origin"] .eye');
+  await originEye.click();
+  expect(await page.evaluate(() => (window as any).sugarcadUi.viewport.isOriginVisible)).toBe(false);
+  await originEye.click();
+  expect(await page.evaluate(() => (window as any).sugarcadUi.viewport.isOriginVisible)).toBe(true);
+  await page.locator('.tree-folder[data-folder="origin"]').click();
+  await expect(page.locator(".tree-plane").first()).toHaveAttribute("title", "Tıkla: bu düzlemde eskiz başlat");
+  await page.screenshot({ path: info.outputPath("tarayici.png") });
+  expect(errors).toEqual([]);
+});

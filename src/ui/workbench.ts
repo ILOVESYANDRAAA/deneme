@@ -180,7 +180,7 @@ export class Workbench {
     this.panels.add({
       id: "browser",
       title: "Tarayıcı",
-      content: new FeatureTree(app, this.sketcher).element,
+      content: new FeatureTree(app, this.sketcher, this.viewport).element,
       defaults: { dock: "left", width: 250 },
     });
     this.panels.add({
