@@ -55,6 +55,8 @@ export class SolidEvaluator {
         return Manifold.cylinder(solid.height, solid.radius, solid.radius, solid.segments ?? 0);
       case "sphere":
         return Manifold.sphere(solid.radius, solid.segments ?? 0);
+      case "coil":
+        return this.coil(solid);
       case "extrude":
       case "revolve": {
         const section = new this.wasm.CrossSection(solid.polygons, solid.fillRule ?? "Positive");
@@ -96,6 +98,56 @@ export class SolidEvaluator {
         // Bu tarifler session tarafından OpenCascade işçisine yönlendirilir; buraya gelmemeli.
         throw new Error("Yuvarlatma, pah, kabuk, loft ve süpürme için OpenCascade çekirdeği gerekir");
     }
+  }
+
+  /**
+   * Helis: dairesel tel kesitini (Frenet çerçevesinde, yola dik) sarmal boyunca ilerleterek kapalı bir ağ kurar.
+   * Eksen Z, sarmal Z=0'da başlar ve sağ vidalıdır; uçlar yola dik düz kapaklardır.
+   */
+  private coil(s: Extract<Solid, { kind: "coil" }>): Manifold {
+    const ring = 24;
+    const steps = Math.max(2, Math.ceil(s.turns * (s.segments ?? 48)));
+    const c = s.pitch / (2 * Math.PI);
+    const len = Math.hypot(s.radius, c);
+    const verts = new Float32Array((ring * (steps + 1) + 2) * 3);
+    let o = 0;
+    for (let i = 0; i <= steps; i++) {
+      const t = (2 * Math.PI * s.turns * i) / steps;
+      const [cos, sin] = [Math.cos(t), Math.sin(t)];
+      // N: eksene doğru, T: yol teğeti, B = T × N
+      const N = [-cos, -sin, 0];
+      const T = [(-s.radius * sin) / len, (s.radius * cos) / len, c / len];
+      const B = [T[1] * N[2] - T[2] * N[1], T[2] * N[0] - T[0] * N[2], T[0] * N[1] - T[1] * N[0]];
+      const P = [s.radius * cos, s.radius * sin, c * t];
+      for (let j = 0; j < ring; j++) {
+        const a = (2 * Math.PI * j) / ring;
+        const [ca, sa] = [Math.cos(a) * s.wire, Math.sin(a) * s.wire];
+        for (let k = 0; k < 3; k++) verts[o++] = P[k] + ca * N[k] + sa * B[k];
+      }
+    }
+    // Uç kapaklarının merkezleri
+    const startCenter = ring * (steps + 1);
+    const endCenter = startCenter + 1;
+    for (const [idx, t] of [[startCenter, 0], [endCenter, 2 * Math.PI * s.turns]] as const) {
+      verts[idx * 3] = s.radius * Math.cos(t);
+      verts[idx * 3 + 1] = s.radius * Math.sin(t);
+      verts[idx * 3 + 2] = c * t;
+    }
+    const tris: number[] = [];
+    for (let i = 0; i < steps; i++) {
+      for (let j = 0; j < ring; j++) {
+        const a = i * ring + j;
+        const b = i * ring + ((j + 1) % ring);
+        tris.push(a, b, b + ring, a, b + ring, a + ring);
+      }
+    }
+    for (let j = 0; j < ring; j++) {
+      const k = (j + 1) % ring;
+      tris.push(startCenter, k, j);
+      tris.push(endCenter, steps * ring + j, steps * ring + k);
+    }
+    const mesh = new this.wasm.Mesh({ numProp: 3, vertProperties: verts, triVerts: new Uint32Array(tris) });
+    return new this.wasm.Manifold(mesh);
   }
 
   toMesh(m: Manifold): MeshData {

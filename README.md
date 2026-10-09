@@ -53,6 +53,11 @@ Modelleme akışı klasik CAD gibidir: **düzlem seç → 2D eskiz çiz → 3D'y
 - **Döndürme:** profili eskizin dikey (V) ya da yatay (U) ekseni etrafında döndürür; aynı işlem seçenekleri
 - **Desen:** dikdörtgensel (X / Y / Z adet ve aralık) ve dairesel (eksen, adet, toplam açı)
 - **Ayna** (XY / XZ / YZ düzlemine göre) ve **Ölçek**
+- **Taşı / Kopyala:** seçili gövdeyi X / Y / Z'de kaydırır, eksenler etrafında (dünya orijini) döndürür; "kopya bırak" açıksa
+  orijinal yerinde kalır. **Gövdeyi Böl:** gövdeyi XY / XZ / YZ düzleminin (ofsetli) bir yanında keser; düzlem normali yönündeki ya da
+  ters yöndeki yarıyı tutar. Her ikisi parametriktir, değerler sonradan Özellikler panelinden değişir
+- **Simit, Boru, Helis** (OLUŞTUR → Temel Şekiller): simit (ana / tüp yarıçapı), boru (iç boşluklu silindir) ve
+  **Helis** (yay: yarıçap, tel kalınlığı, adım, tur sayısı; sarımlar birbirine girerse anlaşılır hata verir)
 - **Yuvarlatma, Pah, Kabuk** (OpenCascade çekirdeği): gövdenin kenarlarına (ya da açılacak yüzlerine) 3D görünümde
   tıklayarak seçilir, değer girilip uygulanır. Sonuç parametriktir: yarıçap / mesafe / et kalınlığı sonradan
   Özellikler panelinden değişir; gövde ölçüsü değişse de seçilen kenarlar en yakın eşleşmeyle bulunur.

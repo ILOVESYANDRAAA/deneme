@@ -102,6 +102,8 @@ const BODY_FEATURE_ICONS: Record<BodyFeatureType, string> = {
   linearPattern: ICONS.linearPattern,
   circularPattern: ICONS.circularPattern,
   scale: ICONS.scale,
+  move: ICONS.move,
+  split: ICONS.split,
 };
 
 /**
@@ -610,10 +612,9 @@ export class Workbench {
     const oneBody = sel.length === 1 && app.document.get(sel[0])?.type !== "sketch";
     const ops = Object.keys(BOOLEAN_LABELS) as BooleanOp[];
     const bodyItem = (type: BodyFeatureType) => this.item(`feature.${type}`, BODY_FEATURE_ICONS[type], { disabled: !oneBody });
-    const plugins = app.primitives
-      .list()
-      .filter((p) => app.commands.has(`shape.add.${p.type}`))
-      .map((p) => this.item(`shape.add.${p.type}`, iconForType(p.type)));
+    const shapes = app.primitives.list().filter((p) => app.commands.has(`shape.add.${p.type}`));
+    const builtinShapes = shapes.filter((p) => !p.pluginId).map((p) => this.item(`shape.add.${p.type}`, iconForType(p.type)));
+    const plugins = shapes.filter((p) => p.pluginId).map((p) => this.item(`shape.add.${p.type}`, iconForType(p.type)));
     return [
       {
         id: "create",
@@ -640,6 +641,7 @@ export class Workbench {
           this.item("feature.loft", ICONS.loft, { disabled: sel.length < 2 }),
           this.item("feature.sweep", ICONS.sweep, { disabled: sel.length !== 2 }),
           { separator: true, label: "" },
+          { label: "Temel Şekiller", icon: ICONS.box, submenu: builtinShapes },
           { label: "Desen", icon: ICONS.linearPattern, submenu: [bodyItem("linearPattern"), bodyItem("circularPattern")] },
           bodyItem("mirror"),
           ...(plugins.length ? [{ separator: true, label: "" }, { label: "Eklenti şekilleri", icon: ICONS.plugin, submenu: plugins }] : []),
@@ -658,12 +660,16 @@ export class Workbench {
           this.button("feature.draft", ICONS.draft, { disabled: !oneBody, title: "Açılı Yüzey — seçili yüzlere kalıp açısı verir" }),
           this.button("feature.shell", ICONS.shell, { disabled: !oneBody, title: "Kabuk — seçilen yüzü açıp gövdenin içini oyar" }),
           this.button("feature.scale", ICONS.scale, { disabled: !oneBody, title: "Ölçek — seçili gövdeyi büyütür / küçültür" }),
+          this.button("feature.move", ICONS.move, { disabled: !oneBody, title: "Taşı / Kopyala — seçili gövdeyi kaydırır, döndürür ya da kopyasını bırakır" }),
+          this.button("feature.split", ICONS.split, { disabled: !oneBody, title: "Gövdeyi Böl — gövdeyi bir düzlemle keser, düzlemin istenen yanını tutar" }),
         ],
         menu: [
           { label: "Birleştir", icon: ICONS.union, submenu: ops.map((op) => this.item(`boolean.${op}`, ICONS[op], { disabled: sel.length !== 2 })) },
           this.item("feature.hole", ICONS.hole),
           ...(BREP_FEATURES as readonly BrepFeatureType[]).map((t) => this.item(`feature.${t}`, t === "fillet" ? ICONS.fillet : t === "chamfer" ? ICONS.chamfer : t === "draft" ? ICONS.draft : ICONS.shell, { disabled: !oneBody })),
           bodyItem("scale"),
+          bodyItem("move"),
+          bodyItem("split"),
           { separator: true, label: "" },
           this.item("edit.toggleVisibility", ICONS.eye, { disabled: !sel.length }),
           this.item("edit.duplicate", undefined, { disabled: !sel.length }),

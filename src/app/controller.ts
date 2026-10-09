@@ -233,6 +233,7 @@ export class SugarApp implements HostServices {
         source: source.id,
         params: Object.fromEntries(Object.entries(FEATURE_PARAMS[type]).map(([k, spec]) => [k, spec.default])),
         ...(type === "mirror" ? { plane: "YZ" as const } : {}),
+        ...(type === "split" ? { plane: "XY" as const } : {}),
         ...(type === "circularPattern" ? { worldAxis: "Z" as const } : {}),
       },
       FEATURE_LABELS[type],
@@ -670,14 +671,14 @@ export function errorText(e: unknown): string {
 
 const BUILTIN_TYPES = new Set(["boolean", ...Object.keys(FEATURE_LABELS)]);
 
-/** Eklentilerin katkıladığı şekiller için "Ekle" komutları. Yerleşik kutu/silindir/küre arayüzde gösterilmez. */
+/** Simit, boru, helis ve eklenti şekilleri için "Ekle" komutları. Yerleşik kutu/silindir/küre arayüzde gösterilmez. */
 function registerPrimitiveCommands(app: SugarApp): void {
   for (const def of app.primitives.list()) {
-    if (!def.pluginId) continue;
+    if (def.hidden) continue;
     const id = `shape.add.${def.type}`;
     if (app.commands.has(id)) continue;
     app.commands.register(
-      { id, title: `${def.label} Ekle`, category: "Şekil", pluginId: def.pluginId },
+      { id, title: `${def.label} Ekle`, category: "Şekil", ...(def.pluginId ? { pluginId: def.pluginId } : {}) },
       () => app.addPrimitive(def.type),
     );
   }

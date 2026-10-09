@@ -183,9 +183,12 @@ export class PropertiesPanel {
         const dirs = Object.fromEntries(Object.entries(PULL_DIRECTIONS).map(([k, v]) => [k, v.label]));
         form.append(this.selectField("pull", "Çekme yönü", dirs, pullKey(f.pull), (v) => this.apply(f.id, { pull: PULL_DIRECTIONS[v].dir })));
       }
-      if (f.type === "mirror") {
+      if (f.type === "mirror" || f.type === "split") {
         const planes = Object.fromEntries((Object.keys(PLANES) as PlaneName[]).map((p) => [p, PLANES[p].label]));
-        form.append(this.selectField("plane", "Ayna düzlemi", planes, f.plane ?? "YZ", (v) => this.apply(f.id, { plane: v as PlaneName })));
+        const fallback = f.type === "split" ? "XY" : "YZ";
+        form.append(
+          this.selectField("plane", f.type === "split" ? "Bölme düzlemi" : "Ayna düzlemi", planes, f.plane ?? fallback, (v) => this.apply(f.id, { plane: v as PlaneName })),
+        );
       }
       if (f.type === "circularPattern") {
         form.append(
@@ -377,6 +380,7 @@ export class PropertiesPanel {
     if (f.type === "revolve") set("axis", f.axis ?? "V");
     if (f.type === "extrude") set("direction", f.direction ?? "one");
     if (f.type === "mirror") set("plane", f.plane ?? "YZ");
+    if (f.type === "split") set("plane", f.plane ?? "XY");
     if (f.type === "circularPattern") set("worldAxis", f.worldAxis ?? "Z");
     const desc = this.body.querySelector<HTMLElement>("[data-sketchdesc]");
     if (desc) desc.textContent = describeSketchData(sketchDataOf(f));

@@ -1062,3 +1062,25 @@ test("Parametreler: panelden ekle, ölçüde ve özellikte ifade kullan, değiş
   await expect.poll(volume, { timeout: 15_000 }).toBeCloseTo(40 * 20 * 5, 0);
   expect(errors).toEqual([]);
 });
+
+test("Helis ekle, Taşı / Kopyala ve Gövdeyi Böl araç şeridinden çalışır", async ({ page }) => {
+  const errors = await open(page);
+  const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
+  // Gövde yokken gövde araçları pasif
+  await expect(toolbar.getByRole("button", { name: "Taşı / Kopyala", exact: true })).toBeDisabled();
+  await page.evaluate(() => (window as any).sugarcad.commands.run("shape.add.coil"));
+  await expect.poll(() => volumeOf(page, 0)).toBeGreaterThan(100);
+  await expect(toolbar.getByRole("button", { name: "Taşı / Kopyala", exact: true })).toBeEnabled();
+  const before = await volumeOf(page, 0);
+  await toolbar.getByRole("button", { name: "Gövdeyi Böl", exact: true }).click();
+  await expect.poll(() => features(page).then((f) => f.map((x) => x.type))).toEqual(["coil", "split"]);
+  // Orta yükseklikten böl: kalan hacim yaklaşık yarısı
+  await page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    const split = app.document.all()[1];
+    return app.updateFeature(split.id, { params: { offset: 12.5, keep: 1 } });
+  });
+  await expect.poll(() => volumeOf(page, 1)).toBeLessThan(before * 0.6);
+  expect(await volumeOf(page, 1)).toBeGreaterThan(before * 0.4);
+  expect(errors).toEqual([]);
+});

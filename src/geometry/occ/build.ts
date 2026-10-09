@@ -335,6 +335,8 @@ export class OccEvaluator {
         return makeCylinderShape(solid.radius, solid.height);
       case "sphere":
         return makeSphereShape(solid.radius);
+      case "coil":
+        throw new Error("Helis üzerinde yuvarlatma, pah, kabuk, loft ve süpürme desteklenmez");
       case "extrude":
         return tidy(profileDrawing(solid).sketchOnPlane("XY").extrude(solid.height) as Shape3D);
       case "revolve": {

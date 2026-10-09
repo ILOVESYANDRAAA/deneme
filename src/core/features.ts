@@ -77,6 +77,8 @@ export interface PrimitiveDef {
   /** Yerleşik şekiller eşzamanlı üretilir; eklenti şekilleri eklenti sunucusunda üretilir. */
   build?: (params: ParamValues) => Solid;
   pluginId?: string;
+  /** Arayüzde "Ekle" komutu / menü öğesi sunulmaz (kutu, silindir, küre: eskiz tabanlı akış tercih edilir). */
+  hidden?: boolean;
 }
 
 export type HoleType = "simple" | "counterbore" | "countersink";
@@ -137,6 +139,8 @@ export const FEATURE_LABELS = {
   loft: "Loft",
   sweep: "Süpürme",
   rib: "Kaburga",
+  move: "Taşı / Kopyala",
+  split: "Gövdeyi Böl",
   stepBody: "STEP Gövdesi",
 } as const;
 
@@ -182,7 +186,7 @@ export function isBrepFeature(type: string): type is BrepFeatureType {
 }
 
 /** Bir gövdeyi girdi alan (kopyalayan / değiştiren) özellikler. */
-export const BODY_FEATURES = ["mirror", "linearPattern", "circularPattern", "scale"] as const;
+export const BODY_FEATURES = ["mirror", "linearPattern", "circularPattern", "scale", "move", "split"] as const;
 export type BodyFeatureType = (typeof BODY_FEATURES)[number];
 
 /** Yerleşik (şekil olmayan) özelliklerin düzenlenebilir parametreleri. */
@@ -204,6 +208,19 @@ export const FEATURE_PARAMS: Record<string, Record<string, ParamSpec>> = {
     angle: { label: "Toplam açı (°)", default: 360, min: 0.1, max: 360, step: 15 },
   },
   scale: { factor: { label: "Ölçek oranı", default: 2, min: 0.001, max: 1000, step: 0.1 } },
+  move: {
+    dx: { label: "X kaydırma", default: 10, step: 1 },
+    dy: { label: "Y kaydırma", default: 0, step: 1 },
+    dz: { label: "Z kaydırma", default: 0, step: 1 },
+    rx: { label: "X etrafında dönüş (°, dünya orijini)", default: 0, step: 15 },
+    ry: { label: "Y etrafında dönüş (°, dünya orijini)", default: 0, step: 15 },
+    rz: { label: "Z etrafında dönüş (°, dünya orijini)", default: 0, step: 15 },
+    copy: { label: "Kopya bırak (1: evet, 0: taşı)", default: 0, min: 0, max: 1, step: 1, integer: true },
+  },
+  split: {
+    offset: { label: "Düzlem ofseti", default: 0, step: 1 },
+    keep: { label: "Tutulan taraf (1: düzlem normali yönü, 0: ters yön)", default: 1, min: 0, max: 1, step: 1, integer: true },
+  },
   stepBody: {},
   rib: {
     thickness: { label: "Kalınlık", default: 2, min: 0.001, step: 0.5 },
@@ -254,6 +271,7 @@ export const BOOLEAN_LABELS: Record<BooleanOp, string> = {
 export const BUILTIN_PRIMITIVES: PrimitiveDef[] = [
   {
     type: "box",
+    hidden: true,
     label: "Kutu",
     params: {
       width: { label: "Genişlik (X)", default: 20, min: 0.01, step: 1 },
@@ -264,6 +282,7 @@ export const BUILTIN_PRIMITIVES: PrimitiveDef[] = [
   },
   {
     type: "cylinder",
+    hidden: true,
     label: "Silindir",
     params: {
       radius: { label: "Yarıçap", default: 10, min: 0.01, step: 1 },
@@ -274,12 +293,67 @@ export const BUILTIN_PRIMITIVES: PrimitiveDef[] = [
   },
   {
     type: "sphere",
+    hidden: true,
     label: "Küre",
     params: {
       radius: { label: "Yarıçap", default: 10, min: 0.01, step: 1 },
       segments: { label: "Bölüm sayısı", default: 48, min: 4, max: 256, step: 4, integer: true },
     },
     build: (p) => ({ kind: "sphere", radius: p.radius, segments: p.segments }),
+  },
+  {
+    type: "torus",
+    label: "Simit",
+    params: {
+      radius: { label: "Ana yarıçap (eksenden tüp merkezine)", default: 20, min: 0.01, step: 1 },
+      tube: { label: "Tüp yarıçapı", default: 5, min: 0.01, step: 0.5 },
+      segments: { label: "Bölüm sayısı", default: 64, min: 8, max: 256, step: 4, integer: true },
+    },
+    build: (p) => {
+      if (!(p.tube < p.radius)) throw new Error("Simit: tüp yarıçapı ana yarıçaptan küçük olmalı");
+      const ring = 32;
+      const profile: Vec2[] = Array.from({ length: ring }, (_, i) => {
+        const a = (2 * Math.PI * i) / ring;
+        return [p.radius + p.tube * Math.cos(a), p.tube * Math.sin(a)];
+      });
+      return { kind: "revolve", polygons: [profile], angle: 360, segments: p.segments };
+    },
+  },
+  {
+    type: "pipe",
+    label: "Boru",
+    params: {
+      outer: { label: "Dış yarıçap", default: 10, min: 0.01, step: 1 },
+      wall: { label: "Et kalınlığı", default: 2, min: 0.01, step: 0.5 },
+      height: { label: "Yükseklik", default: 30, min: 0.01, step: 1 },
+      segments: { label: "Bölüm sayısı", default: 64, min: 3, max: 512, step: 4, integer: true },
+    },
+    build: (p) => {
+      if (!(p.wall < p.outer)) throw new Error("Boru: et kalınlığı dış yarıçaptan küçük olmalı");
+      const inner = p.outer - p.wall;
+      return {
+        kind: "revolve",
+        polygons: [[[inner, 0], [p.outer, 0], [p.outer, p.height], [inner, p.height]]],
+        angle: 360,
+        segments: p.segments,
+      };
+    },
+  },
+  {
+    type: "coil",
+    label: "Helis (Yay)",
+    params: {
+      radius: { label: "Helis yarıçapı (eksenden tel merkezine)", default: 10, min: 0.01, step: 1 },
+      wire: { label: "Tel yarıçapı", default: 1, min: 0.01, step: 0.25 },
+      pitch: { label: "Adım (tur başına yükseklik)", default: 5, min: 0.02, step: 0.5 },
+      turns: { label: "Tur sayısı", default: 5, min: 0.1, max: 200, step: 0.5 },
+      segments: { label: "Tur başına bölüm", default: 48, min: 8, max: 256, step: 8, integer: true },
+    },
+    build: (p) => {
+      if (!(p.wire < p.radius)) throw new Error("Helis: tel yarıçapı helis yarıçapından küçük olmalı");
+      if (!(p.pitch > 2 * p.wire)) throw new Error(`Helis: adım, tel çapından (${(2 * p.wire).toFixed(2)}) büyük olmalı; yoksa sarımlar birbirine girer`);
+      return { kind: "coil", radius: p.radius, wire: p.wire, pitch: p.pitch, turns: p.turns, segments: p.segments };
+    },
   },
 ];
 
@@ -466,6 +540,8 @@ export function stepAssets(features: readonly Feature[]): Record<string, string>
   return out;
 }
 
+/** Gövdeyi Böl: silinen yarı uzayı temsil eden kutunun yarı boyutu (mm). */
+const SPLIT_EXTENT = 10000;
 /** "Boydan boya" deliklerin uzunluğu (mm). */
 const THROUGH_LENGTH = 10000;
 /** Delik silindirinin yüzeyden dışarı taştığı pay: yüzeyde ince bir zar kalmasın. */
@@ -558,6 +634,29 @@ function bodyFeatureSolid(feature: Feature, child: Solid): Solid {
       const f = p.factor ?? 1;
       if (!(f > 0)) throw new Error(`${feature.name}: ölçek oranı pozitif olmalı`);
       return { kind: "transform", matrix: [f, 0, 0, 0, 0, f, 0, 0, 0, 0, f, 0, 0, 0, 0, 1], child };
+    }
+    case "move": {
+      const rotate: Vec3 = [p.rx ?? 0, p.ry ?? 0, p.rz ?? 0];
+      const translate: Vec3 = [p.dx ?? 0, p.dy ?? 0, p.dz ?? 0];
+      const moved: Solid = {
+        kind: "transform",
+        ...(rotate.some((v) => v !== 0) ? { rotate } : {}),
+        ...(translate.some((v) => v !== 0) ? { translate } : {}),
+        child,
+      };
+      return (p.copy ?? 0) >= 1 ? union([child, moved]) : moved;
+    }
+    case "split": {
+      const plane = feature.plane ?? "XY";
+      if (!(plane in PLANES)) throw new Error(`${feature.name}: bilinmeyen düzlem ${plane}`);
+      const keepPositive = (p.keep ?? 1) >= 1;
+      // Düzlemin silinecek yanındaki dev bir kutu: yerel +Z yönü düzlem normalidir.
+      const cutter: Solid = {
+        kind: "transform",
+        matrix: planeMatrix(plane, p.offset ?? 0),
+        child: { kind: "transform", translate: [0, 0, keepPositive ? -SPLIT_EXTENT : 0], child: { kind: "box", size: [2 * SPLIT_EXTENT, 2 * SPLIT_EXTENT, SPLIT_EXTENT] } },
+      };
+      return { kind: "boolean", op: "subtract", children: [child, cutter] };
     }
     case "linearPattern": {
       const copies: Solid[] = [];

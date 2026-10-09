@@ -53,6 +53,8 @@ export type Solid =
   | { kind: "box"; size: Vec3 }
   | { kind: "cylinder"; radius: number; height: number; segments?: number }
   | { kind: "sphere"; radius: number; segments?: number }
+  /** Helis (yay): `radius` eksene uzaklık, `wire` tel yarıçapı, `pitch` adım, `turns` tur sayısı; sağ vidalı, tel ekseni Z=0'dan başlar. */
+  | { kind: "coil"; radius: number; wire: number; pitch: number; turns: number; segments?: number }
   | { kind: "extrude"; polygons: Vec2[][]; height: number; fillRule?: FillRule; loops?: Loop[] }
   /** Çokgenleri Y ekseni etrafında döndürür; sonuçta Y ekseni Z olur (manifold kuralı). Sadece x > 0 tarafı kullanılır. */
   | { kind: "revolve"; polygons: Vec2[][]; angle: number; segments?: number; fillRule?: FillRule; loops?: Loop[] }
@@ -154,6 +156,17 @@ export function validateSolid(value: unknown, path = "solid", depth = 0): Solid 
       if (s.segments !== undefined && (!isNum(s.segments) || s.segments < 4)) {
         throw new Error(`${path}.segments: en az 4 olmalı`);
       }
+      return s as unknown as Solid;
+    case "coil":
+      if (!isNum(s.radius) || s.radius <= 0) throw new Error(`${path}.radius: pozitif olmalı`);
+      if (!isNum(s.wire) || s.wire <= 0) throw new Error(`${path}.wire: pozitif olmalı`);
+      if (s.wire >= s.radius) throw new Error(`${path}.wire: helis yarıçapından küçük olmalı`);
+      if (!isNum(s.pitch) || s.pitch <= 2 * s.wire) throw new Error(`${path}.pitch: tel çapından (${2 * (s.wire as number)}) büyük olmalı`);
+      if (!isNum(s.turns) || s.turns <= 0 || s.turns > 200) throw new Error(`${path}.turns: 0 ile 200 arasında olmalı`);
+      if (s.segments !== undefined && (!isNum(s.segments) || s.segments < 8 || s.segments > 256)) {
+        throw new Error(`${path}.segments: 8 ile 256 arasında olmalı`);
+      }
+      if (s.turns * ((s.segments as number | undefined) ?? 48) > 20000) throw new Error(`${path}: tur sayısı × tur başına bölüm 20000'i aşamaz`);
       return s as unknown as Solid;
     case "extrude":
     case "revolve":
