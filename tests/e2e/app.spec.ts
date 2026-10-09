@@ -51,6 +51,21 @@ test("hazır şekiller arayüzde yok, eskiz araçları var", async ({ page }) =>
   expect(errors).toEqual([]);
 });
 
+test("Eskiz Paleti: Düzleme Bak ve alttaki Eskizi Bitir", async ({ page }) => {
+  const errors = await open(page);
+  await page.getByRole("button", { name: "Eskiz", exact: true }).click();
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  const palette = page.locator('.fpanel[data-panel="sketchPalette"]');
+  await expect(palette).toBeVisible();
+  await expect(page.locator("body")).toHaveAttribute("data-sketching", "");
+  await palette.getByRole("button", { name: "Düzleme Bak" }).click();
+  await palette.getByRole("button", { name: "Eskizi Bitir" }).click();
+  await expect(page.locator(".statusbar")).not.toContainText("Eskiz · XY");
+  await expect(palette).toBeHidden();
+  await expect(page.locator("body")).not.toHaveAttribute("data-sketching", "");
+  expect(errors).toEqual([]);
+});
+
 test("XY eskizi: dikdörtgen + daire → delikli plaka ekstrüzyonu", async ({ page }) => {
   const errors = await open(page);
   await page.getByRole("button", { name: "Eskiz", exact: true }).click();

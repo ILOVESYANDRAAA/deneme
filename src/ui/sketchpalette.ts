@@ -28,7 +28,7 @@ export class SketchPalette {
   private constraints = h("div", { class: "palette-list", attrs: { "aria-label": "Kısıtlar" } });
   private listKey = "";
 
-  constructor(private readonly sketcher: Sketcher) {
+  constructor(private readonly sketcher: Sketcher, private readonly lookAtPlane: () => void = () => {}) {
     const options = h("div", { class: "palette-options" });
     for (const [key, label, kbd] of CHECKS) {
       const input = h("input", { type: "checkbox", checked: sketcher.options[key] });
@@ -57,8 +57,9 @@ export class SketchPalette {
       this.constraints,
       h(
         "div",
-        { class: "btn-row" },
-        h("button", { class: "btn primary", onclick: () => sketcher.finish() }, icon(ICONS.check), "Eskizi Bitir"),
+        { class: "palette-footer" },
+        h("button", { class: "btn", title: "Görünümü eskiz düzlemine çevir", onclick: () => this.lookAtPlane() }, "Düzleme Bak"),
+        h("button", { class: "btn finish", onclick: () => sketcher.finish() }, icon(ICONS.check), "Eskizi Bitir"),
       ),
     );
     this.sides.id = "pal-sides";

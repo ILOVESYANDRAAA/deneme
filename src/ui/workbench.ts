@@ -204,7 +204,7 @@ export class Workbench {
     this.panels.add({
       id: "sketchPalette",
       title: "Eskiz Paleti",
-      content: new SketchPalette(this.sketcher).element,
+      content: new SketchPalette(this.sketcher, () => this.lookAtSketchPlane()).element,
       defaults: { dock: "right", width: 270 },
     });
     this.panels.setContext("sketchPalette", false);
@@ -259,6 +259,7 @@ export class Workbench {
         lastSketch = this.sketcher.activeId;
         lastTool = this.sketcher.tool;
         this.panels.setContext("sketchPalette", this.sketcher.isActive);
+        document.body.toggleAttribute("data-sketching", this.sketcher.isActive);
         this.renderRibbon();
       }
       this.renderStatus();
@@ -897,6 +898,12 @@ export class Workbench {
     }
     if (info.dof === 0) return h("span", { class: "dof full", title: "Her şey ölçü ve kısıtlarla belirli" }, "Tam tanımlı");
     return h("span", { class: "dof", title: "Henüz ölçü / kısıt verilmemiş hareket serbestliği" }, `${info.dof} serbestlik`);
+  }
+
+  /** Eskiz Paleti > Düzleme Bak: görünümü etkin eskizin düzlemine döndürür. */
+  private lookAtSketchPlane(): void {
+    const f = this.sketcher.sketch();
+    if (f?.plane) this.viewport.enterSketch(f.id, f.frame ?? f.plane, f.params.offset ?? 0);
   }
 
   private renderStatus(): void {
