@@ -19,8 +19,12 @@ const cameraDir = (page: Page) =>
     return [d.x, d.y, d.z] as number[];
   });
 
-/** Bir küp yüzünün (u, v ∈ -1..1 yerel koordinat) noktasının ekran konumu. */
+/** Kamera değiştikten sonra küpün CSS dönüşümü bir sonraki karede güncellenir; iki kare bekle. */
+const settle = (page: Page) => page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+
+/** Bir küp yüzünün (u, v ∈ -1..1 yerel koordinat) noktasının ekran konumu (küp oturduktan sonra ölçülür). */
 async function cubePoint(page: Page, view: string, u: number, v: number) {
+  await settle(page);
   return page.evaluate(
     ({ view, u, v }) => {
       const face = document.querySelector(`.viewcube-face[data-view=${view}]`) as HTMLElement;
