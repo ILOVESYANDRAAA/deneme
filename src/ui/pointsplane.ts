@@ -33,7 +33,7 @@ export class ThreePointPlaneTool implements PointerHandler {
   open(): void {
     this.close();
     this.points = [];
-    this.box = hudBox("3 Noktalı Düzlem", ICONS.plane, () => this.close(), this.body);
+    this.box = hudBox("3 Noktalı Düzlem", ICONS.plane3pt, () => this.close(), this.body);
     this.viewport.element.append(this.box);
     this.viewport.setInteraction(this);
     this.render();

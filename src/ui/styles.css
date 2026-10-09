@@ -26,6 +26,21 @@
   --shadow: 0 6px 22px rgb(20 30 40 / 0.16);
   --font: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
   --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Menlo, monospace;
+  /* Çok renkli ikon paleti (src/ui/icons.ts color()). */
+  --ico-body: #5b9bd5;
+  --ico-body-top: #b4d4f2;
+  --ico-body-side: #3a78b5;
+  --ico-line: #1f3b57;
+  --ico-accent: #f08a24;
+  --ico-accent-dark: #a85a0e;
+  --ico-neutral: #7d8792;
+  --ico-neutral-light: #d9dee3;
+  --ico-sketch: #1f4e8c;
+  --ico-profile: rgb(91 155 213 / 0.2);
+  --ico-hole: #1c3550;
+  --ico-paper: #ffffff;
+  --ico-ok-line: #1e6b35;
+  --ico-ok-mark: #ffffff;
   color-scheme: light;
 }
 
@@ -54,6 +69,20 @@
   --cube-face: #30323b;
   --cube-text: #b9bcc6;
   --shadow: 0 8px 26px rgb(0 0 0 / 0.45);
+  --ico-body: #5b9bd5;
+  --ico-body-top: #a6cdf2;
+  --ico-body-side: #3a6fa6;
+  --ico-line: #d6e6f5;
+  --ico-accent: #f39a3c;
+  --ico-accent-dark: #ffcf96;
+  --ico-neutral: #9aa3ad;
+  --ico-neutral-light: #4f5560;
+  --ico-sketch: #8ec5ff;
+  --ico-profile: rgb(91 155 213 / 0.22);
+  --ico-hole: #0f2236;
+  --ico-paper: #eef3f8;
+  --ico-ok-line: #bff0cf;
+  --ico-ok-mark: #0d2a17;
   color-scheme: dark;
 }
 
@@ -298,6 +327,7 @@ button {
   width: 30px;
   height: 30px;
   stroke-width: 1.1;
+  --ico-sw: 1.3;
 }
 
 /* Düğme adı ikonun altında, en çok iki satır (Fusion şeridi gibi). */
@@ -326,6 +356,21 @@ button {
 .rtool:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* Renkli ikonlar pasifken griye döner (düğmenin genel saydamlığına ek olarak). */
+.rtool:disabled .icon svg.ci {
+  filter: grayscale(1);
+}
+
+.rtool:disabled:has(svg.ci) {
+  opacity: 0.45;
+}
+
+.menu-item:disabled .menu-icon svg.ci,
+.mm-item:disabled svg.ci,
+.mm-slice:disabled svg.ci {
+  filter: grayscale(1);
 }
 
 .rgroup.primary .rtool {
