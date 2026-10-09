@@ -75,6 +75,7 @@ test("XY eskizi: dikdörtgen + daire → delikli plaka ekstrüzyonu", async ({ p
 
   await toolbar.getByRole("button", { name: "Eskizi Bitir" }).click();
   await toolbar.getByRole("button", { name: "Ekstrüzyon" }).click();
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect(page.locator(".tree-row").first()).toHaveText("Ekstrüzyon 1");
   await expect(page.locator(".tree-row.consumed")).toHaveText(["Eskiz 1"]);
 
@@ -160,6 +161,7 @@ test("ekstrüzyon 3D görünümde tıklanarak seçilir ve silinir", async ({ pag
   await clickSketch(page, [10, 10]);
   await page.keyboard.press("Control+Enter");
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(() => volumeOf(page, 1)).toBeCloseTo(4000, 0);
   const box = (await page.locator("canvas").boundingBox())!;
   await page.locator("canvas").click({ position: { x: box.width / 2, y: 30 } });
@@ -532,6 +534,49 @@ test("çizgi üzerine yakalama: eğri üzerinde kısıtı kurulur, simge görün
   expect(errors).toEqual([]);
 });
 
+test("Ekstrüzyon diyaloğu: canlı önizleme, İptal iz bırakmaz, Tamam tek geri alma adımı", async ({ page }) => {
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [20, 10]);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Enter");
+  const dialog = page.getByRole("dialog", { name: "Ekstrüzyon" });
+  const volume = () => page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    const f = app.document.all().find((x: any) => x.type === "extrude");
+    return f ? (app.meshes.get(f.id)?.volume ?? 0) : -1;
+  });
+
+  // Aç: özellik hemen eklenir ve model hesaplanır (20 x 10 x 10 = 2000)
+  await page.keyboard.press("e");
+  await expect(dialog).toBeVisible();
+  await expect.poll(volume).toBeCloseTo(2000, 0);
+  // Mesafe yazılırken canlı güncellenir (önizleme)
+  await dialog.getByRole("textbox", { name: "Mesafe" }).fill("25");
+  await expect.poll(volume).toBeCloseTo(5000, 0);
+  await page.screenshot({ path: `${S}/16-ekstruzyon-diyalogu.png` });
+  // İptal: özellik de, geri alma izi de kalmaz
+  await dialog.getByRole("button", { name: "İptal" }).click();
+  await expect(dialog).toBeHidden();
+  expect((await features(page)).map((f: any) => f.type)).toEqual(["sketch"]);
+
+  // Tekrar aç, simetrik yap, Tamam
+  await page.keyboard.press("e");
+  await dialog.getByRole("textbox", { name: "Mesafe" }).fill("30");
+  await dialog.getByRole("combobox", { name: "Yön" }).selectOption("symmetric");
+  await expect.poll(volume).toBeCloseTo(6000, 0);
+  await dialog.getByRole("button", { name: "Tamam" }).click();
+  await expect(dialog).toBeHidden();
+  expect((await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
+  // Tek geri alma: bütün düzenlemeler birlikte gider
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch"]);
+  expect(errors).toEqual([]);
+});
+
 test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitleme ve tam tanımlı durum", async ({ page }) => {
   const errors = await open(page);
   await expect(page.locator("body[data-solver=true]")).toBeAttached();
@@ -742,6 +787,7 @@ test("Yuvarlatma ve Kabuk: kenar / yüz seç, değer gir, uygula", async ({ page
   await clickSketch(page, [40, 20]);
   await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
   const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
 
@@ -841,6 +887,7 @@ test("Delik: yüzeye tıkla, tür ve ölçü gir, uygula; özellikler panelinden
   await clickSketch(page, [40, 20]);
   await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
   const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
 
@@ -895,6 +942,7 @@ test("Yüzeye Eskiz: yüzeye tıkla, o düzlemde çiz, birleştirerek çek", asy
   await clickSketch(page, [40, 20]);
   await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
   const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
 
@@ -928,6 +976,7 @@ test("Yüzeye Eskiz: yüzeye tıkla, o düzlemde çiz, birleştirerek çek", asy
     app.document.setSelection([app.document.all()[2].id]);
   });
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude", "sketch", "extrude"]);
   await page.evaluate(async () => {
     const app = (window as any).sugarcad;
@@ -957,6 +1006,7 @@ test("Açılı Yüzey: yan yüzlere eğim ver", async ({ page }) => {
   await clickSketch(page, [40, 20]);
   await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
   const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
   await toolbar.getByRole("button", { name: "Açılı Yüzey", exact: true }).click();
@@ -1090,6 +1140,7 @@ test("Kütle Özellikleri: hacim, ağırlık merkezi ve malzemeye göre kütle",
   await clickSketch(page, [40, 20]);
   await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
   const toolbar = page.getByRole("toolbar", { name: "Araçlar" });
   await toolbar.getByRole("button", { name: "Kütle Özellikleri" }).click();
@@ -1117,6 +1168,7 @@ test("STEP: dışa aktar (indirme) ve geri içe aktar", async ({ page }) => {
   await clickSketch(page, [40, 20]);
   await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
 
   const [download] = await Promise.all([
@@ -1183,6 +1235,7 @@ test("Parametreler: panelden ekle, ölçüde ve özellikte ifade kullan, değiş
   await expect(page.locator(".sketch-notes .note.dim").first()).toContainText("ƒ 40");
   await page.evaluate(() => (window as any).sugarcad.commands.run("sketch.finish"));
   await page.keyboard.press("e");
+  await page.getByRole("dialog", { name: "Ekstrüzyon" }).getByRole("button", { name: "Tamam" }).click();
   await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch", "extrude"]);
 
   // Ekstrüzyon mesafesi: ƒ düğmesiyle "yukseklik / 4" (= 5)

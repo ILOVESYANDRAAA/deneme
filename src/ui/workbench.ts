@@ -6,6 +6,7 @@ import { CONSTRAINT_LABELS, type GeometricConstraintType } from "../core/sketchm
 import type { BooleanOp } from "../core/solid";
 import { BrepTool } from "./brep";
 import { FaceSketchTool } from "./facesketch";
+import { ExtrudeTool } from "./extrudetool";
 import { HoleTool } from "./holetool";
 import { Notifications, showInputDialog } from "./dialogs";
 import { ParametersPanel } from "./parameters";
@@ -130,6 +131,7 @@ export class Workbench {
   readonly section: SectionTool;
   readonly brep: BrepTool;
   readonly hole: HoleTool;
+  readonly extrude: ExtrudeTool;
   readonly faceSketch: FaceSketchTool;
   readonly planePoints: ThreePointPlaneTool;
   readonly mass: MassPropertiesTool;
@@ -159,6 +161,16 @@ export class Workbench {
     this.section = new SectionTool(this.viewport, () => this.renderAll());
     this.brep = new BrepTool(app, this.viewport, () => this.renderAll());
     this.hole = new HoleTool(app, this.viewport, () => this.renderAll());
+    this.extrude = new ExtrudeTool(app, this.viewport.element, () => this.renderAll());
+    app.openExtrudeDialog = () => {
+      if (this.sketcher.isActive) this.sketcher.finish();
+      this.measure.close();
+      this.brep.close();
+      this.hole.close();
+      this.faceSketch.close();
+      this.planePoints.close();
+      this.extrude.open();
+    };
     this.faceSketch = new FaceSketchTool(app, this.viewport, this.sketcher, () => this.renderAll());
     this.mass = new MassPropertiesTool(app, this.viewport, () => this.renderAll());
     this.planePoints = new ThreePointPlaneTool(app, this.viewport, this.sketcher, () => this.renderAll());
@@ -239,6 +251,7 @@ export class Workbench {
           this.measure.close();
           this.brep.close();
           this.hole.close();
+          this.extrude.close();
           this.faceSketch.close();
           this.planePoints.close();
         }
@@ -432,6 +445,7 @@ export class Workbench {
         if (this.sketcher.isActive) throw new Error(`${BREP_LABELS[type]} için önce eskizi bitirin`);
         this.measure.close();
         this.hole.close();
+        this.extrude.close();
         await this.brep.open(type);
       });
     }
@@ -439,6 +453,7 @@ export class Workbench {
       this.measure.close();
       this.brep.close();
       this.hole.close();
+      this.extrude.close();
       this.faceSketch.close();
       this.planePoints.close();
     };
@@ -479,6 +494,7 @@ export class Workbench {
       this.measure.close();
       this.brep.close();
       this.hole.close();
+      this.extrude.close();
       this.faceSketch.open();
     });
     this.app.commands.register({ id: "feature.hole", title: "Delik", category: "Katı", keybinding: "H" }, () => {
@@ -486,6 +502,7 @@ export class Workbench {
       this.measure.close();
       this.brep.close();
       this.faceSketch.close();
+      this.extrude.close();
       this.hole.open();
     });
   }
@@ -496,6 +513,7 @@ export class Workbench {
       if (this.sketcher.isActive) throw new Error("Ölçmek için önce eskizi bitirin");
       this.brep.close();
       this.hole.close();
+      this.extrude.close();
       this.mass.close();
       this.measure.open();
       this.renderRibbon();
@@ -914,6 +932,7 @@ export class Workbench {
       if (this.mass.isActive) return this.mass.close();
       if (this.planePoints.isActive) return this.planePoints.close();
       if (this.faceSketch.isActive) return this.faceSketch.close();
+      if (this.extrude.isActive) return this.extrude.cancel();
       if (this.hole.isActive) return this.hole.close();
       if (this.brep.isActive) return this.brep.close();
       if (this.measure.isActive) return this.measure.close();

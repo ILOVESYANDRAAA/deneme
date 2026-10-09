@@ -292,6 +292,12 @@ button {
   font-weight: 700;
 }
 
+/* Küçük etiket metni okunaklı kalsın: durum rengi yalnızca ikonda. */
+.rtool[aria-pressed="true"] .rtool-label,
+.rgroup.primary .rtool .rtool-label {
+  color: var(--text);
+}
+
 .rgroup.primary .rtool .icon svg {
   stroke-width: 2;
 }
@@ -1698,4 +1704,33 @@ select:focus {
 
 .field.has-expr {
   grid-template-columns: 1fr 100px auto;
+}
+
+/* ---- Ekstrüzyon diyaloğu (Fusion'daki gibi sağda, canlı önizlemeli) ---- */
+body[data-feature-dialog] [data-panel="properties"] {
+  display: none;
+}
+
+.inspect-hud.feature-dialog {
+  top: 12px;
+  right: 112px;
+  left: auto;
+  transform: none;
+  width: 290px;
+  min-width: 0;
+}
+
+.feature-dialog .field select,
+.feature-dialog .field input[type="text"] {
+  width: 100%;
+}
+
+.feature-dialog .dialog-note {
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 0 2px;
+}
+
+.feature-dialog .dialog-note.warn {
+  color: var(--danger);
 }

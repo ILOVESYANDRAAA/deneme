@@ -77,6 +77,8 @@ export class SugarApp implements HostServices {
   readonly errors = new Map<string, string>();
   readonly onDidChangeMeshes = new Emitter<MeshesChanged>();
   readonly onDidChangeTitle = new Emitter<string>();
+  /** Arayüz, Ekstrüzyon komutunu diyalogla açmak için buraya kendini bağlar (yoksa özellik doğrudan eklenir). */
+  openExtrudeDialog: (() => void) | null = null;
 
   filePath: string | null = null;
   /** Eskiz kısıt çözücüsü; başlatılana kadar (ya da hiç yoksa) kısıtlar çözülmez, çizim yine çalışır. */
@@ -711,9 +713,10 @@ function registerBuiltinCommands(app: SugarApp): void {
     doc.setSelection(doc.roots().map((f) => f.id)),
   );
 
-  c.register({ id: "feature.extrude", title: "Ekstrüzyon", category: "Katı", keybinding: "E" }, () =>
-    app.addSketchFeature("extrude"),
-  );
+  c.register({ id: "feature.extrude", title: "Ekstrüzyon", category: "Katı", keybinding: "E" }, () => {
+    if (app.openExtrudeDialog) app.openExtrudeDialog();
+    else app.addSketchFeature("extrude");
+  });
   c.register({ id: "feature.rib", title: "Kaburga", category: "Katı" }, async () => {
     const f = app.addSketchFeature("rib");
     // Tek aday gövde varsa kaburga ona birleştirilir.

@@ -42,6 +42,8 @@ export class SugarDocument {
   private redoStack: Snapshot[] = [];
   /** `batch` içindeyken: tek geri alma adımı ve tek değişiklik bildirimi. */
   private batching: { checkpointed: boolean; changed: boolean } | null = null;
+  /** `beginSession` ile açılan önizleme oturumu: içindeki değişiklikler tek geri alma adımıdır (bildirimler yine anında gider). */
+  private session: { checkpointed: boolean } | null = null;
   private nextId = 1;
   private selection: string[] = [];
 
@@ -109,6 +111,10 @@ export class SugarDocument {
   // ---- değiştirme ----
 
   private checkpoint(): void {
+    if (this.session) {
+      if (this.session.checkpointed) return;
+      this.session.checkpointed = true;
+    }
     if (this.batching) {
       if (this.batching.checkpointed) return;
       this.batching.checkpointed = true;
@@ -126,6 +132,29 @@ export class SugarDocument {
     }
     this.setSelection(this.selection);
     this.onDidChange.fire();
+  }
+
+  /**
+   * Diyalogla canlı önizleme için: `endSession`'a kadar yapılan bütün değişiklikler tek geri alma adımı olur.
+   * `cancelSession` hepsini geri alır. Bildirimler her değişiklikte hemen gider (model anında güncellenir).
+   */
+  beginSession(): void {
+    this.session = { checkpointed: false };
+  }
+
+  endSession(): void {
+    this.session = null;
+  }
+
+  cancelSession(): void {
+    const session = this.session;
+    this.session = null;
+    if (!session?.checkpointed) return;
+    const prev = this.undoStack.pop();
+    if (!prev) return;
+    this.features = prev.features;
+    this.params = prev.params;
+    this.changed();
   }
 
   /** `fn` içindeki tüm değişiklikler tek geri alma adımı olur ve tek bildirim gönderir. Hata olursa değişiklikler geri alınır. */
