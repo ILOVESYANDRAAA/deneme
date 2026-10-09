@@ -437,6 +437,64 @@ test("ölçü görünür: ölçü çizgisi ve oklar çizilir, önizleme imleçle
   expect(errors).toEqual([]);
 });
 
+test("kutu seçimi, yakalama göstergesi ve hizalama kılavuzu", async ({ page }) => {
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [30, 20]);
+  await page.keyboard.press("c");
+  await clickSketch(page, [60, 10]);
+  await clickSketch(page, [65, 10]);
+  await page.keyboard.press("Escape"); // aracı bırak
+  const sel = () => page.evaluate(() => [...(window as any).sugarcadUi.sketcher.selected] as string[]);
+  const at = (p: [number, number]) =>
+    page.evaluate((p) => {
+      const ui = (window as any).sugarcadUi;
+      return ui.viewport.screenPoint(ui.sketcher.plane, 0, p);
+    }, p);
+  const drag = async (a: [number, number], b: [number, number]) => {
+    const [s, e] = [await at(a), await at(b)];
+    await page.mouse.move(s.x, s.y);
+    await page.mouse.down();
+    await page.mouse.move((s.x + e.x) / 2, (s.y + e.y) / 2, { steps: 4 });
+    await page.mouse.move(e.x, e.y, { steps: 4 });
+    return e;
+  };
+
+  // Sola doğru (kesen) sürükleme: dikdörtgenin yalnızca bir kenarına değen kutu 1 kenarı seçer; kutu görünür.
+  await drag([40, 25], [10, 12]);
+  await expect(page.locator(".sketch-box.crossing")).toBeVisible();
+  await page.mouse.up();
+  await expect(page.locator(".sketch-box")).toBeHidden();
+  expect(await sel()).toHaveLength(2); // üst kenar + sağ kenar
+  // Sağa (pencere) sürükleme: yalnızca tamamı içeride kalan daire
+  await drag([50, 0], [75, 20]);
+  await expect(page.locator(".sketch-box:not(.crossing)")).toBeVisible();
+  await page.mouse.up();
+  const picked = await sel();
+  expect(picked).toHaveLength(1);
+  const kind = await page.evaluate((id) => (window as any).sugarcadUi.sketcher.data().curves.find((c: any) => c.id === id).kind, picked[0]);
+  expect(kind).toBe("circle");
+  // Boş yere tıklamak seçimi temizler (sürükleme sonrası tıklama yutulmaz)
+  await clickSketch(page, [45, 40]);
+  expect(await sel()).toHaveLength(0);
+
+  // Yakalama göstergesi: köşeye yaklaşınca simge ve etiket
+  await page.keyboard.press("l");
+  const corner = await at([30, 20]);
+  await page.mouse.move(corner.x + 3, corner.y + 2);
+  await expect(page.locator(".snap-glyph .snap-label")).toHaveText("köşe");
+  // Izgara dışı bir noktayla hizalanma: köşenin hizasındaki boş yer kılavuz çizer
+  await clickSketch(page, [45, 35]);
+  const guide = await at([30.07, 40]);
+  await page.mouse.move(guide.x, guide.y);
+  await expect(page.locator(".snap-guide")).toHaveCount(1);
+  await page.screenshot({ path: `${S}/15-kilavuz.png` });
+  expect(errors).toEqual([]);
+});
+
 test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitleme ve tam tanımlı durum", async ({ page }) => {
   const errors = await open(page);
   await expect(page.locator("body[data-solver=true]")).toBeAttached();
@@ -1138,7 +1196,10 @@ test("Helis ekle, Taşı / Kopyala ve Gövdeyi Böl araç şeridinden çalışı
     const split = app.document.all()[1];
     return app.updateFeature(split.id, { params: { offset: 12.5, keep: 1 } });
   });
-  await expect.poll(() => volumeOf(page, 1)).toBeLessThan(before * 0.6);
-  expect(await volumeOf(page, 1)).toBeGreaterThan(before * 0.4);
+  // Bölme sırasında hacim kısa süre 0 görünebilir; değerin aralığa oturmasını bekle.
+  await expect.poll(async () => {
+    const v = await volumeOf(page, 1);
+    return v > before * 0.4 && v < before * 0.6;
+  }).toBe(true);
   expect(errors).toEqual([]);
 });

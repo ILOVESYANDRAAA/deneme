@@ -48,6 +48,8 @@ export class SketchNotes {
   /** Ölçü çizgileri, uzatma çizgileri ve oklar (etiketlerin altında). */
   private readonly graphics: SVGSVGElement;
   private readonly editorSlot: HTMLElement;
+  /** Boş yerde sürüklerken görünen seçim kutusu. */
+  private readonly boxEl: HTMLElement;
   private editorKey = "";
 
   constructor(
@@ -58,7 +60,9 @@ export class SketchNotes {
     this.chips = h("div", { class: "sketch-chips" });
     this.graphics = svgEl("svg", { class: "sketch-dims", "aria-hidden": "true" });
     this.editorSlot = h("div", { class: "sketch-editor-slot" });
-    this.element = h("div", { class: "sketch-notes" }, this.graphics, this.chips, this.editorSlot);
+    this.boxEl = h("div", { class: "sketch-box" });
+    this.boxEl.hidden = true;
+    this.element = h("div", { class: "sketch-notes" }, this.graphics, this.boxEl, this.chips, this.editorSlot);
     this.element.hidden = true;
     viewport.element.append(this.element);
     const refresh = () => this.render();
@@ -74,6 +78,7 @@ export class SketchNotes {
       this.chips.replaceChildren();
       this.graphics.replaceChildren();
       this.editorSlot.replaceChildren();
+      this.boxEl.hidden = true;
       this.editorKey = "";
       return;
     }
@@ -161,9 +166,56 @@ export class SketchNotes {
     const choice = dr && !dr.editing ? dr.choices[dr.index] : null;
     const preview = choice ? dimensionLayout(d, { type: choice.type, refs: choice.refs, offset: dr?.offset }, gap) : null;
     if (preview) drawn.push(this.drawDimension(preview, screen, gap, "dim-graphic draft"));
+    drawn.push(...this.drawSnap(screen));
+    this.syncBox(host);
     this.graphics.replaceChildren(...drawn);
     this.chips.replaceChildren(...kids);
     this.syncEditor(place, gap);
+  }
+
+  /** Yakalama göstergesi (köşe, merkez, orta nokta) ve hizalama kılavuzları. */
+  private drawSnap(screen: (p: Vec2) => Vec2): SVGElement[] {
+    const sk = this.sketcher;
+    const out: SVGElement[] = [];
+    if (!sk.tool || sk.tool === "dimension") return out;
+    for (const [from, to] of sk.guides) {
+      const [a, b] = [screen(from), screen(to)];
+      out.push(svgEl("path", { class: "snap-guide", d: `M${a[0].toFixed(1)} ${a[1].toFixed(1)}L${b[0].toFixed(1)} ${b[1].toFixed(1)}` }));
+      out.push(svgEl("circle", { class: "snap-guide-end", cx: a[0].toFixed(1), cy: a[1].toFixed(1), r: "3" }));
+    }
+    if (sk.cursor && sk.snapKind) {
+      const [x, y] = screen(sk.cursor);
+      const g = svgEl("g", { class: "snap-glyph" });
+      const R = 6;
+      if (sk.snapKind === "merkez") {
+        g.append(svgEl("circle", { cx: String(x), cy: String(y), r: String(R) }), svgEl("circle", { class: "dot", cx: String(x), cy: String(y), r: "1.5" }));
+      } else if (sk.snapKind === "orta nokta") {
+        g.append(svgEl("path", { d: `M${x} ${y - R}L${x + R} ${y + R}L${x - R} ${y + R}Z` }));
+      } else {
+        g.append(svgEl("rect", { x: String(x - R), y: String(y - R), width: String(2 * R), height: String(2 * R) }));
+      }
+      const label = svgEl("text", { class: "snap-label", x: String(x + R + 5), y: String(y - R - 3) });
+      label.textContent = sk.snapKind;
+      g.append(label);
+      out.push(g);
+    }
+    return out;
+  }
+
+  private syncBox(host: DOMRect): void {
+    const box = this.sketcher.box;
+    if (!box?.active) {
+      this.boxEl.hidden = true;
+      return;
+    }
+    this.boxEl.hidden = false;
+    this.boxEl.classList.toggle("crossing", box.x1 < box.x0);
+    Object.assign(this.boxEl.style, {
+      left: `${Math.min(box.x0, box.x1) - host.left}px`,
+      top: `${Math.min(box.y0, box.y1) - host.top}px`,
+      width: `${Math.abs(box.x1 - box.x0)}px`,
+      height: `${Math.abs(box.y1 - box.y0)}px`,
+    });
   }
 
   /** Ölçüyü ekran uzayında çizer: uzatma / ölçü çizgileri ve oklar. Dar aralıkta oklar dışarıdan bakar. */

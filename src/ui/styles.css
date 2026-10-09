@@ -820,7 +820,7 @@ kbd {
   color: var(--text-dim);
 }
 
-.hud-field input {
+.hud-field input[type="text"] {
   width: 62px;
   height: 20px;
   padding: 0 4px;
@@ -1404,6 +1404,54 @@ select:focus {
 
 .sketch-dims .dim-graphic.conflict {
   color: var(--danger);
+}
+
+/* Yakalama göstergesi ve hizalama kılavuzları. */
+.sketch-dims .snap-guide {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.8;
+}
+
+.sketch-dims .snap-guide-end {
+  fill: var(--accent);
+  opacity: 0.8;
+}
+
+.sketch-dims .snap-glyph rect,
+.sketch-dims .snap-glyph circle,
+.sketch-dims .snap-glyph path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.sketch-dims .snap-glyph .dot {
+  fill: var(--accent);
+  stroke: none;
+}
+
+.sketch-dims .snap-label {
+  fill: var(--text);
+  font: 11px var(--mono);
+  paint-order: stroke;
+  stroke: var(--bg-elev);
+  stroke-width: 3px;
+}
+
+/* Boş yerde sürükleyerek kutu seçimi: sağa = pencere (düz çizgi), sola = kesen (kesikli). */
+.sketch-notes .sketch-box {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.sketch-notes .sketch-box.crossing {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* Yerleştirilmeyi bekleyen yeni ölçü: kesikli önizleme. */

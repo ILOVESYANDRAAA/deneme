@@ -23,6 +23,7 @@ import {
   type SnapKind,
 } from "../core/sketchmodel";
 import { evaluateInput } from "../core/expr";
+import { boxOf, curvesInBox, findAlignment } from "../core/sketchpick";
 import { extendCurve, offsetCurves, patternCircular, patternRect, rotateAbout, trimCurve, translateBy } from "../core/sketchops";
 import type { Vec2 } from "../core/solid";
 import type { PointerHandler, Viewport } from "./viewport";
@@ -186,6 +187,10 @@ export class Sketcher implements PointerHandler {
   /** Ölçü aracının topladığı öğeler ve açık ölçü kutusu. */
   private dimPick: string[] = [];
   draft: DimensionDraft | null = null;
+  /** İmleç başka noktalarla hizalıysa kılavuz çizgileri (kaynak → imleç), eskiz koordinatlarında. */
+  guides: [Vec2, Vec2][] = [];
+  /** Boş yerde sürükleyerek kutu seçimi (ekran koordinatları). Soldan sağa: pencere, sağdan sola: kesen. */
+  box: { x0: number; y0: number; x1: number; y1: number; active: boolean } | null = null;
   /** Sürükleyerek düzenleme (araç yokken bir noktayı ya da eğriyi tutup çekmek). */
   private drag: {
     start: SketchData;
@@ -491,7 +496,11 @@ export class Sketcher implements PointerHandler {
     if (this.tool || e.button !== 0) return;
     const raw = this.viewport.planePoint(e.clientX, e.clientY, this.plane, this.offset);
     const id = raw ? this.hit(raw) : null;
-    if (!raw || !id || id.startsWith("k")) return;
+    if (!raw || !id || id.startsWith("k")) {
+      // Boş yerde basılıp sürüklenirse kutu seçimi başlar.
+      this.box = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, active: false };
+      return;
+    }
     const d = this.data();
     const pm = pointMap(d);
     const curve = d.curves.find((c) => c.id === id);
@@ -499,7 +508,13 @@ export class Sketcher implements PointerHandler {
     this.drag = { start: structuredClone(d), ids, origin: raw, origins: new Map(ids.map((i) => [i, pm.get(i)!])), active: false, cx: e.clientX, cy: e.clientY };
   }
 
-  pointerUp(): void {
+  pointerUp(e?: PointerEvent): void {
+    const box = this.box;
+    this.box = null;
+    if (box?.active) {
+      this.finishBoxSelect(box, !!e && (e.ctrlKey || e.metaKey || e.shiftKey));
+      return;
+    }
     const drag = this.drag;
     this.drag = null;
     if (!drag?.active) return;
@@ -553,6 +568,16 @@ export class Sketcher implements PointerHandler {
       this.dragTo(e);
       return;
     }
+    if (this.box) {
+      if (e.buttons & 1) {
+        this.box.x1 = e.clientX;
+        this.box.y1 = e.clientY;
+        if (Math.hypot(e.clientX - this.box.x0, e.clientY - this.box.y0) > 4) this.box.active = true;
+        this.onDidChange.fire();
+        return;
+      }
+      this.box = null; // düğme canvas dışında bırakılmış
+    }
     this.cursor = this.snap(e.clientX, e.clientY);
     this.floatDimension(e);
     if (!this.tool || this.tool === "dimension" || CURVE_TOOLS.has(this.tool)) {
@@ -581,8 +606,23 @@ export class Sketcher implements PointerHandler {
   pointerLeave(): void {
     this.cursor = null;
     this.hovered = null;
+    this.snapKind = null;
+    this.guides = [];
     this.syncViewOptions();
     this.updatePreview();
+    this.onDidChange.fire();
+  }
+
+  /** Kutu seçimini uygular: sağa sürükleme tamamı içeridekileri, sola sürükleme değenleri seçer. */
+  private finishBoxSelect(box: { x0: number; y0: number; x1: number; y1: number }, additive: boolean): void {
+    const a = this.viewport.planePoint(box.x0, box.y0, this.plane, this.offset);
+    const b = this.viewport.planePoint(box.x1, box.y1, this.plane, this.offset);
+    if (!a || !b) return;
+    const ids = curvesInBox(this.data(), boxOf(a, b), box.x1 < box.x0);
+    if (!additive) this.selected.clear();
+    ids.forEach((id) => this.selected.add(id));
+    this.syncViewOptions();
+    this.onDidChange.fire();
   }
 
   /** Eskiz koordinatındaki öğe: önce nokta, sonra eğri. */
@@ -1158,6 +1198,7 @@ export class Sketcher implements PointerHandler {
     this.gridStep = niceStep(wpp * 12);
     this.snapKind = null;
     this.snapId = null;
+    this.guides = [];
     if (this.options.snapPoints) {
       const candidates: { p: Vec2; kind: SnapKind; pointId?: string }[] = [
         ...snapCandidates(this.data()),
@@ -1180,7 +1221,20 @@ export class Sketcher implements PointerHandler {
         return [best.p[0], best.p[1]];
       }
     }
-    return this.options.snapGrid ? snapToGrid(raw, this.gridStep) : roundPoint(raw);
+    const free: Vec2 = this.options.snapGrid ? snapToGrid(raw, this.gridStep) : roundPoint(raw);
+    return this.alignTo(raw, free, wpp);
+  }
+
+  /** Çizim araçlarında imleç başka noktalarla yatay / dikey hizalanınca ona yapışır ve kılavuz çizer. */
+  private alignTo(raw: Vec2, free: Vec2, wpp: number): Vec2 {
+    const drawing = this.tool && this.tool !== "dimension" && !CURVE_TOOLS.has(this.tool);
+    if (!drawing || !this.options.snapPoints) return free;
+    const sources: Vec2[] = [[0, 0], ...snapCandidates(this.data()).map((c) => c.p), ...this.pending];
+    const al = findAlignment(sources, raw, SNAP_PX * wpp * 0.6);
+    const p: Vec2 = [al.x ? al.x[0] : free[0], al.y ? al.y[1] : free[1]];
+    if (al.x) this.guides.push([al.x, p]);
+    if (al.y) this.guides.push([al.y, p]);
+    return p;
   }
 
   /** Eski API: imleç bir noktaya yapıştı mı? */
