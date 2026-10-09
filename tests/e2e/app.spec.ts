@@ -642,6 +642,126 @@ test("Ekstrüzyon diyaloğu sağlamlığı: ikinci E, geçersiz Enter, açıkken
   expect(errors).toEqual([]);
 });
 
+test("Ekstrüzyon oku: tuvalde sürükleyerek mesafe, kamera dönmez, kapanınca temizlenir", async ({ page }) => {
+  test.setTimeout(90_000);
+  const errors = await open(page);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [20, 10]);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Enter");
+  const dialog = page.getByRole("dialog", { name: "Ekstrüzyon" });
+  const box = dialog.getByRole("textbox", { name: "Mesafe" });
+  const volume = () => page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    const f = app.document.all().find((x: any) => x.type === "extrude");
+    return f ? (app.meshes.get(f.id)?.volume ?? 0) : -1;
+  });
+  const handle = () => page.evaluate(() => (window as any).sugarcadUi.extrude.handleScreen());
+  /** Profil merkezinin (10, 5) z yüksekliğindeki ekran konumu. */
+  const screenAt = (z: number) => page.evaluate((z) => (window as any).sugarcadUi.viewport.screenOf([10, 5, z]), z);
+  const camera = () => page.evaluate(() => (window as any).sugarcadUi.viewport.camera.position.toArray() as number[]);
+  const cursor = () => page.evaluate(() => (window as any).sugarcadUi.viewport.canvas.style.cursor as string);
+  /** Oku sap üstünden tutup ekranda ok yönünde `px` piksel (eksi: ters) sürükler. */
+  async function dragArrow(px: number) {
+    const h = (await handle())!;
+    const len = Math.hypot(h.grip.x - h.base.x, h.grip.y - h.base.y);
+    const ux = (h.grip.x - h.base.x) / len;
+    const uy = (h.grip.y - h.base.y) / len;
+    await page.mouse.move(h.grip.x, h.grip.y);
+    await page.mouse.down();
+    for (let i = 1; i <= 10; i++) await page.mouse.move(h.grip.x + (ux * px * i) / 10, h.grip.y + (uy * px * i) / 10);
+    await page.mouse.up();
+  }
+
+  await page.keyboard.press("e");
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => (window as any).sugarcadUi.viewport.setView("iso"));
+  await expect.poll(volume).toBeCloseTo(2000, 0);
+
+  // Ok profil merkezinden çıkar, ekstrüzyon ucunda (z = 10) durur ve ekranda yukarı bakar.
+  const h0 = (await handle())!;
+  expect(h0).not.toBeNull();
+  const top = await screenAt(10);
+  expect(Math.abs(h0.base.x - top.x)).toBeLessThan(1.5);
+  expect(Math.abs(h0.base.y - top.y)).toBeLessThan(1.5);
+  expect(h0.grip.y).toBeLessThan(h0.base.y);
+
+  // Üzerine gelince imleç tutma imlecine döner.
+  await page.mouse.move(h0.grip.x, h0.grip.y);
+  await expect.poll(cursor).toBe("grab");
+  await page.screenshot({ path: `${S}/17-ekstruzyon-oku.png` });
+
+  // Yukarı sürükle: mesafe artar, 0.5'e yuvarlanır, kutu ve model güncellenir; kamera dönmez.
+  const cam0 = await camera();
+  await dragArrow(80);
+  const up = Number(await box.inputValue());
+  expect(up).toBeGreaterThan(15);
+  expect((up * 2) % 1).toBe(0);
+  await expect.poll(volume).toBeCloseTo(200 * up, 0);
+  expect(await camera()).toEqual(cam0);
+  const h1 = (await handle())!;
+  const top1 = await screenAt(up);
+  expect(Math.abs(h1.base.x - top1.x)).toBeLessThan(1.5);
+  expect(Math.abs(h1.base.y - top1.y)).toBeLessThan(1.5);
+  await page.screenshot({ path: `${S}/18-ekstruzyon-oku-surukle.png` });
+
+  // Düzlemin altına sürükle: mesafe negatif olur (ters yön), ok aşağı döner.
+  const down = await page.evaluate(([a, b]) => {
+    const v = (window as any).sugarcadUi.viewport;
+    return Math.hypot(v.screenOf([10, 5, a]).x - v.screenOf([10, 5, b]).x, v.screenOf([10, 5, a]).y - v.screenOf([10, 5, b]).y);
+  }, [up, -5]);
+  await dragArrow(-down);
+  const neg = Number(await box.inputValue());
+  expect(neg).toBeLessThan(0);
+  await expect.poll(volume).toBeCloseTo(200 * Math.abs(neg), 0);
+  const h2 = (await handle())!;
+  expect(h2.grip.y).toBeGreaterThan(h2.base.y);
+
+  // Simetrik: ok mesafenin yarısında; sürükleme iki kat etki eder.
+  await box.fill("20");
+  await dialog.getByRole("combobox", { name: "Yön" }).selectOption("symmetric");
+  await expect.poll(volume).toBeCloseTo(4000, 0);
+  const mid = await screenAt(10);
+  const h3 = (await handle())!;
+  expect(Math.abs(h3.base.x - mid.x)).toBeLessThan(1.5);
+  expect(Math.abs(h3.base.y - mid.y)).toBeLessThan(1.5);
+  await dragArrow(40);
+  const sym = Number(await box.inputValue());
+  expect(sym).toBeGreaterThan(20);
+  await expect.poll(volume).toBeCloseTo(200 * sym, 0);
+  const h4 = (await handle())!;
+  const mid4 = await screenAt(sym / 2);
+  expect(Math.abs(h4.base.y - mid4.y)).toBeLessThan(1.5);
+
+  // Tamam: ok, katman nesneleri ve imleç temizlenir; bütün sürüklemeler tek geri alma adımı.
+  await dialog.getByRole("button", { name: "Tamam" }).click();
+  await expect(dialog).toBeHidden();
+  expect(await handle()).toBeNull();
+  expect(await page.evaluate(() => (window as any).sugarcadUi.viewport.layer.children.length)).toBe(0);
+  expect(await cursor()).toBe("");
+  // Ok kalktıktan sonra aynı yerden sürüklemek kamerayı döndürür (dinleyiciler gerçekten kaldırıldı).
+  const cam1 = await camera();
+  await page.mouse.move(h4.grip.x, h4.grip.y);
+  await page.mouse.down();
+  await page.mouse.move(h4.grip.x + 60, h4.grip.y + 20, { steps: 5 });
+  await page.mouse.up();
+  expect(await camera()).not.toEqual(cam1);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await features(page)).map((f: any) => f.type)).toEqual(["sketch"]);
+
+  // İptal de oku kaldırır.
+  await page.keyboard.press("e");
+  await expect(dialog).toBeVisible();
+  expect(await handle()).not.toBeNull();
+  await dialog.getByRole("button", { name: "İptal" }).click();
+  expect(await handle()).toBeNull();
+  expect(await page.evaluate(() => (window as any).sugarcadUi.viewport.layer.children.length)).toBe(0);
+  expect(errors).toEqual([]);
+});
+
 test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitleme ve tam tanımlı durum", async ({ page }) => {
   const errors = await open(page);
   await expect(page.locator("body[data-solver=true]")).toBeAttached();

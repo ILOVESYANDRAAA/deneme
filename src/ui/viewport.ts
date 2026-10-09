@@ -130,6 +130,18 @@ export interface PointerHandler {
  * Eksen düzeni CAD alışkanlığıdır: Z yukarı.
  */
 export class Viewport {
+  /** Görünüm öğesinden görünüme ulaşmak için (yalnızca öğe alan araçlar, örn. Ekstrüzyon diyaloğu). */
+  private static readonly byElement = new WeakMap<HTMLElement, Viewport>();
+
+  /** `element`i bu görünümün öğesi (ya da onun içindeki bir öğe) olan görünüm. */
+  static of(element: HTMLElement): Viewport | undefined {
+    for (let el: HTMLElement | null = element; el; el = el.parentElement) {
+      const v = Viewport.byElement.get(el);
+      if (v) return v;
+    }
+    return undefined;
+  }
+
   readonly element: HTMLElement;
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -186,6 +198,7 @@ export class Viewport {
       " ile 3D'ye çevirin",
     );
     this.element = h("div", { class: "viewport" }, this.hint);
+    Viewport.byElement.set(this.element, this);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -368,6 +381,34 @@ export class Viewport {
 
   get currentInteraction(): PointerHandler | null {
     return this.interaction;
+  }
+
+  /** Çizim tuvali (araçların fare olaylarını ve imleci yönetmesi için). */
+  get canvas(): HTMLCanvasElement {
+    return this.renderer.domElement;
+  }
+
+  /**
+   * Kamera denetimini (döndür / kaydır / yakınlaştır) açar ya da kapatır; önceki durumu döndürür.
+   * Tuvalde bir tutamaç sürüklenirken kamera dönmesin diye kullanılır.
+   */
+  setCameraControlsEnabled(enabled: boolean): boolean {
+    const was = this.controls.enabled;
+    this.controls.enabled = enabled;
+    return was;
+  }
+
+  /** İmlecin kameradan çıkan ışını (dünya koordinatında, kopya). */
+  rayAt(clientX: number, clientY: number): THREE.Ray {
+    this.raycaster.setFromCamera(this.ndc(clientX, clientY), this.camera);
+    return this.raycaster.ray.clone();
+  }
+
+  /** Dünya noktasında bir pikselin dünya birimi karşılığı (ekranda sabit boyutlu tutamaçlar için). */
+  worldPerPixelAt(p: Vec3): number {
+    const height = this.renderer.domElement.clientHeight || 1;
+    const depth = Math.max(1e-6, new THREE.Vector3(...p).sub(this.camera.position).dot(this.camera.getWorldDirection(new THREE.Vector3())));
+    return (2 * depth * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))) / height;
   }
 
   private ndc(clientX: number, clientY: number): THREE.Vector2 {
