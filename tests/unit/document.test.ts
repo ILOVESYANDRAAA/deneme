@@ -84,3 +84,49 @@ describe("SugarDocument", () => {
     expect(doc.getSelection()).toEqual([]);
   });
 });
+
+describe("önizleme oturumu (diyalog canlı önizlemesi)", () => {
+  it("oturumdaki bütün değişiklikler tek geri alma adımı olur", () => {
+    const doc = new SugarDocument();
+    doc.add(box, "Önceki");
+    doc.beginSession();
+    const a = doc.add(box, "Yeni");
+    doc.update(a.id, { params: { width: 5, depth: 1, height: 1 } });
+    doc.update(a.id, { params: { width: 9, depth: 1, height: 1 } });
+    doc.endSession();
+    expect(doc.all()).toHaveLength(2);
+    doc.undo();
+    expect(doc.all().map((f) => f.name)).toEqual(["Önceki 1"]);
+  });
+
+  it("iptal başlangıç durumuna döner ve geri alma yığınında iz bırakmaz", () => {
+    const doc = new SugarDocument();
+    const first = doc.add(box, "Önceki");
+    doc.beginSession();
+    const a = doc.add(box, "Yeni");
+    doc.update(a.id, { params: { width: 5, depth: 1, height: 1 } });
+    doc.cancelSession();
+    expect(doc.all().map((f) => f.id)).toEqual([first.id]);
+    // Yığında yalnızca iptal öncesi adım var: tek undo "Önceki"yi de siler, fazladan adım yok
+    expect(doc.undo()).toBe(true);
+    expect(doc.all()).toHaveLength(0);
+    expect(doc.undo()).toBe(false);
+  });
+
+  it("oturum açıkken geri al / yükle oturumu bitirir ve bildirir; sonraki iptal hiçbir şeyi bozmaz", () => {
+    const doc = new SugarDocument();
+    doc.add(box, "Önceki");
+    let ended = 0;
+    doc.onDidEndSession.on(() => ended++);
+    doc.beginSession();
+    doc.add(box, "Yeni");
+    doc.undo(); // oturumun adımını geri alır
+    expect(ended).toBe(1);
+    expect(doc.inSession).toBe(false);
+    doc.cancelSession(); // oturum yok: etkisiz
+    expect(doc.all().map((f) => f.name)).toEqual(["Önceki 1"]);
+    doc.beginSession();
+    doc.load(JSON.parse(doc.serialize()));
+    expect(ended).toBe(2);
+  });
+});

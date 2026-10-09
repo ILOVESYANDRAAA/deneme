@@ -79,6 +79,8 @@ export class SugarApp implements HostServices {
   readonly onDidChangeTitle = new Emitter<string>();
   /** Arayüz, Ekstrüzyon komutunu diyalogla açmak için buraya kendini bağlar (yoksa özellik doğrudan eklenir). */
   openExtrudeDialog: (() => void) | null = null;
+  /** Açık özellik diyaloğu varsa onaylar (yeni bir eskiz gibi belgeyi değiştiren bir komut başlarken çağrılır). */
+  commitFeatureDialog: (() => void) | null = null;
 
   filePath: string | null = null;
   /** Eskiz kısıt çözücüsü; başlatılana kadar (ya da hiç yoksa) kısıtlar çözülmez, çizim yine çalışır. */
@@ -181,6 +183,7 @@ export class SugarApp implements HostServices {
 
   /** Seçilen başlangıç düzleminde ya da serbest bir düzlemde (örn. gövde yüzeyi) boş bir eskiz açar. */
   createSketch(plane: PlaneRef, offset = 0): Feature {
+    this.commitFeatureDialog?.();
     const params = { offset: Number.isFinite(offset) ? offset : 0 };
     let placement: Pick<Feature, "plane" | "frame">;
     if (typeof plane === "string") {

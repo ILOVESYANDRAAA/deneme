@@ -162,6 +162,7 @@ export class Workbench {
     this.brep = new BrepTool(app, this.viewport, () => this.renderAll());
     this.hole = new HoleTool(app, this.viewport, () => this.renderAll());
     this.extrude = new ExtrudeTool(app, this.viewport.element, () => this.renderAll());
+    app.commitFeatureDialog = () => this.extrude.finish();
     app.openExtrudeDialog = () => {
       if (this.sketcher.isActive) this.sketcher.finish();
       this.measure.close();

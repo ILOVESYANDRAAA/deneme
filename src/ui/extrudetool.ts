@@ -21,7 +21,13 @@ export class ExtrudeTool {
     private readonly app: SugarApp,
     private readonly host: HTMLElement,
     private readonly onChanged: () => void,
-  ) {}
+  ) {
+    // Geri al / yinele / dosya yükleme oturumu bitirirse diyalog artık geçersizdir; özellik kaybolduysa da kapanır.
+    app.document.onDidEndSession.on(() => this.close(true));
+    app.document.onDidChange.on(() => {
+      if (this.box && this.featureId && !app.document.get(this.featureId)) this.close(true);
+    });
+  }
 
   get isActive(): boolean {
     return this.box !== null;
@@ -33,14 +39,17 @@ export class ExtrudeTool {
   }
 
   open(): void {
-    this.close(true);
+    // Zaten açıksa (ikinci E, şerit düğmesi) mevcut diyaloga dokunma.
+    if (this.box) return;
     const doc = this.app.document;
     doc.beginSession();
-    const feature = this.app.addSketchFeature("extrude");
-    if (!feature) {
-      doc.endSession();
-      return;
+    let feature: ReturnType<SugarApp["addSketchFeature"]> = null;
+    try {
+      feature = this.app.addSketchFeature("extrude");
+    } finally {
+      if (!feature) doc.cancelSession();
     }
+    if (!feature) return;
     this.featureId = feature.id;
     this.sketchId = feature.sketch ?? null;
     this.box = hudBox("Ekstrüzyon", ICONS.extrude, () => this.cancel(), this.body);
@@ -50,6 +59,21 @@ export class ExtrudeTool {
     document.body.dataset.featureDialog = "extrude";
     this.render();
     this.onChanged();
+  }
+
+  /** Tamam / Enter: yazılan mesafe geçerliyse uygular; değilse diyalog açık kalır. */
+  async confirm(): Promise<void> {
+    if (!this.box) return;
+    const ok = await this.commitDistance();
+    if (ok) this.apply();
+  }
+
+  /** Başka bir komut belgeyi değiştirmeden önce: diyalog uygulanabiliyorsa onaylanır, değilse iptal edilir. */
+  finish(): void {
+    if (!this.box) return;
+    const f = this.featureId && this.app.document.get(this.featureId);
+    if (f && f.operation && f.operation !== "new" && !f.target) this.cancel();
+    else this.apply();
   }
 
   /** Tamam: özellik kalır, tek geri alma adımı olarak. */
@@ -87,12 +111,34 @@ export class ExtrudeTool {
 
   /** Mesafe kutusuna yazılmış gibi değer verir (testler ve kısayollar için). */
   setDistance(text: string): Promise<unknown> {
-    return this.enqueue(() => this.app.setFeatureParam(this.featureId!, "distance", text));
+    return this.enqueue((id) => this.app.setFeatureParam(id, "distance", text));
   }
 
-  private enqueue(job: () => Promise<unknown>): Promise<unknown> {
-    this.queue = this.queue.then(job).catch((e) => this.app.showMessage(e instanceof Error ? e.message : String(e), "error"));
-    return this.queue;
+  /**
+   * İşi sıraya alır. İş, kuyruğa alındığı andaki özelliğe uygulanır; diyalog bu arada kapandıysa ya da
+   * yeniden açıldıysa hiçbir şey yapılmaz. Hata mesaj olarak gösterilir, kuyruk devam eder.
+   */
+  private enqueue(job: (id: string) => Promise<unknown>, quiet = false): Promise<boolean> {
+    const id = this.featureId;
+    const run = this.queue.then(async () => {
+      if (!id || id !== this.featureId) return false;
+      try {
+        await job(id);
+        return true;
+      } catch (e) {
+        if (!quiet) this.app.showMessage(e instanceof Error ? e.message : String(e), "error");
+        return false;
+      }
+    });
+    this.queue = run;
+    return run;
+  }
+
+  /** Mesafe kutusundaki son metni modele uygular; geçersizse hata gösterir ve false döner. */
+  private async commitDistance(): Promise<boolean> {
+    const input = this.body.querySelector<HTMLInputElement>('input[aria-label="Mesafe"]');
+    if (!input) return true;
+    return this.enqueue((id) => this.app.setFeatureParam(id, "distance", input.value));
   }
 
   private render(): void {
@@ -109,7 +155,14 @@ export class ExtrudeTool {
         ...(Object.keys(labels) as T[]).map((k) => h("option", { value: k, selected: k === value }, labels[k])),
       ) as HTMLSelectElement;
       el.addEventListener("change", () => onChange(el.value as T));
-      el.addEventListener("keydown", (e) => e.stopPropagation());
+      el.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") this.cancel();
+        else if (e.key === "Enter") {
+          e.preventDefault();
+          void this.confirm();
+        }
+      });
       return h("label", { class: "field" }, h("span", {}, label), el);
     };
 
@@ -122,12 +175,13 @@ export class ExtrudeTool {
       e.stopPropagation();
       if (e.key === "Enter") {
         e.preventDefault();
-        void this.enqueue(() => this.app.setFeatureParam(this.featureId!, "distance", distance.value)).then(() => this.apply());
+        void this.confirm();
       } else if (e.key === "Escape") this.cancel();
     });
     distance.addEventListener("input", () => {
       // Yazarken canlı önizleme: geçerli sayı / ifade oldukça model güncellenir.
-      void this.enqueue(() => this.app.setFeatureParam(this.featureId!, "distance", distance.value).catch(() => undefined));
+      // Yarım yazılmış değerler ("-", "1e") sessizce yok sayılır.
+      void this.enqueue((id) => this.app.setFeatureParam(id, "distance", distance.value), true);
     });
 
     const candidates = operation === "new" ? [] : this.app.targetCandidates(f.id);
@@ -137,26 +191,30 @@ export class ExtrudeTool {
       ...compact(
       h("div", { class: "dialog-note" }, `Profil: ${sketch?.name ?? "eskiz"}`),
       select<ExtrudeDirection>("Yön", DIRECTION_LABELS, f.direction ?? "one", (v) =>
-        void this.enqueue(() => this.app.updateFeature(f.id, { direction: v === "one" ? undefined : v })),
+        void this.enqueue((id) => this.app.updateFeature(id, { direction: v === "one" ? undefined : v })),
       ),
       h("label", { class: "field" }, h("span", {}, "Mesafe (mm)"), distance),
       select<BodyOperation>("İşlem", OPERATION_LABELS, operation, (v) =>
-        void this.enqueue(async () => {
-          await this.app.setOperation(f.id, v);
+        void this.enqueue(async (id) => {
+          await this.app.setOperation(id, v);
+          // Birden çok aday varsa ilki seçilir; açılır kutu ile model hep aynı şeyi göstersin.
+          const now = this.app.document.get(id);
+          const first = this.app.targetCandidates(id)[0];
+          if (v !== "new" && now && !now.target && first) await this.app.updateFeature(id, { target: first.id });
           this.render();
         }),
       ),
       operation !== "new"
         ? candidates.length
           ? select("Hedef gövde", targets, f.target ?? candidates[0].id, (v) =>
-              void this.enqueue(() => this.app.updateFeature(f.id, { target: v })),
+              void this.enqueue((id) => this.app.updateFeature(id, { target: v })),
             )
           : h("div", { class: "dialog-note warn" }, "Birleştirilecek / kesilecek bir gövde yok")
         : null,
       h(
         "div",
         { class: "btn-row" },
-        h("button", { class: "btn primary", onclick: () => this.apply() }, "Tamam"),
+        h("button", { class: "btn primary", onclick: () => void this.confirm() }, "Tamam"),
         h("button", { class: "btn", onclick: () => this.cancel() }, "İptal"),
       ),
       ),

@@ -577,6 +577,56 @@ test("Ekstrüzyon diyaloğu: canlı önizleme, İptal iz bırakmaz, Tamam tek ge
   expect(errors).toEqual([]);
 });
 
+test("Ekstrüzyon diyaloğu sağlamlığı: ikinci E, geçersiz Enter, açıkken geri al ve yeni eskiz", async ({ page }) => {
+  const errors = await open(page);
+  const types = async () => (await features(page)).map((f: any) => f.type);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [0, 0]);
+  await clickSketch(page, [20, 10]);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Enter");
+  const dialog = page.getByRole("dialog", { name: "Ekstrüzyon" });
+  const distance = dialog.getByRole("textbox", { name: "Mesafe" });
+
+  // İkinci E / düğme mevcut diyaloğu bozmaz: tek özellik, tek diyalog
+  await page.keyboard.press("e");
+  await expect(dialog).toBeVisible();
+  await page.getByRole("toolbar", { name: "Araçlar" }).getByRole("button", { name: "Ekstrüzyon" }).click();
+  await expect(dialog).toHaveCount(1);
+  expect(await types()).toEqual(["sketch", "extrude"]);
+
+  // Geçersiz değerle Enter: diyalog açık kalır, hata gösterilir
+  await distance.fill("abc");
+  await distance.press("Enter");
+  await expect(page.locator(".toast.error")).toBeVisible();
+  await expect(dialog).toBeVisible();
+  // Geçerli değerle Enter: uygular
+  await distance.fill("12");
+  await distance.press("Enter");
+  await expect(dialog).toBeHidden();
+  expect(await types()).toEqual(["sketch", "extrude"]);
+
+  // Açıkken geri al: oturum kendiliğinden biter, ilgisiz bir adım geri alınmaz
+  await page.keyboard.press("Control+z"); // Tamam edilen ekstrüzyonu geri al
+  await expect.poll(types).toEqual(["sketch"]);
+  await page.keyboard.press("e");
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => (window as any).sugarcad.document.undo());
+  await expect(dialog).toBeHidden();
+  expect(await types()).toEqual(["sketch"]);
+
+  // Diyalog açıkken yeni eskiz: ekstrüzyon onaylanır, yeni eskiz silinmez
+  await page.keyboard.press("e");
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => void (window as any).sugarcad.commands.run("sketch.new"));
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await expect(dialog).toBeHidden();
+  await expect.poll(types).toEqual(["sketch", "extrude", "sketch"]);
+  expect(errors).toEqual([]);
+});
+
 test("kısıt çözücü yüklenir; ölçü aracı, ölçü düzenleme, sabitleme ve tam tanımlı durum", async ({ page }) => {
   const errors = await open(page);
   await expect(page.locator("body[data-solver=true]")).toBeAttached();

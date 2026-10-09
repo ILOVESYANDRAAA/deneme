@@ -43,13 +43,15 @@ export class SugarDocument {
   /** `batch` içindeyken: tek geri alma adımı ve tek değişiklik bildirimi. */
   private batching: { checkpointed: boolean; changed: boolean } | null = null;
   /** `beginSession` ile açılan önizleme oturumu: içindeki değişiklikler tek geri alma adımıdır (bildirimler yine anında gider). */
-  private session: { checkpointed: boolean } | null = null;
+  private session: { snapshot: Snapshot; depth: number } | null = null;
   private nextId = 1;
   private selection: string[] = [];
 
   /** Özellikler değiştiğinde (ekleme, silme, düzenleme, geri alma, yükleme). */
   readonly onDidChange = new Emitter<void>();
   readonly onDidChangeSelection = new Emitter<string[]>();
+  /** Önizleme oturumu dışarıdan sonlandırıldığında (geri al / yinele / dosya yükle) bildirilir; diyaloglar kapanır. */
+  readonly onDidEndSession = new Emitter<void>();
 
   dirty = false;
 
@@ -111,9 +113,9 @@ export class SugarDocument {
   // ---- değiştirme ----
 
   private checkpoint(): void {
+    // Oturum içinde başlangıç anlık görüntüsü zaten saklı; yığına yalnızca ilk değişiklikte bir adım yazılır.
     if (this.session) {
-      if (this.session.checkpointed) return;
-      this.session.checkpointed = true;
+      if (this.undoStack.length > this.session.depth) return;
     }
     if (this.batching) {
       if (this.batching.checkpointed) return;
@@ -139,22 +141,35 @@ export class SugarDocument {
    * `cancelSession` hepsini geri alır. Bildirimler her değişiklikte hemen gider (model anında güncellenir).
    */
   beginSession(): void {
-    this.session = { checkpointed: false };
+    this.session = { snapshot: { features: clone(this.features), params: clone(this.params) }, depth: this.undoStack.length };
   }
 
+  /** Oturumu kabul eder: yapılan değişiklikler tek geri alma adımı olarak kalır. */
   endSession(): void {
     this.session = null;
   }
 
+  /** Oturumu geri alır: belge başlangıç anlık görüntüsüne döner, geri alma yığınında iz kalmaz. */
   cancelSession(): void {
     const session = this.session;
     this.session = null;
-    if (!session?.checkpointed) return;
-    const prev = this.undoStack.pop();
-    if (!prev) return;
-    this.features = prev.features;
-    this.params = prev.params;
+    if (!session) return;
+    this.features = clone(session.snapshot.features);
+    this.params = clone(session.snapshot.params);
+    this.undoStack.length = Math.min(this.undoStack.length, session.depth);
+    this.redoStack = [];
     this.changed();
+  }
+
+  get inSession(): boolean {
+    return this.session !== null;
+  }
+
+  /** Geri al / yinele / yükle: açık oturum kendiliğinden biter (diyaloglar `onDidEndSession` ile kapanır). */
+  private dropSession(): void {
+    if (!this.session) return;
+    this.session = null;
+    this.onDidEndSession.fire();
   }
 
   /** `fn` içindeki tüm değişiklikler tek geri alma adımı olur ve tek bildirim gönderir. Hata olursa değişiklikler geri alınır. */
@@ -333,6 +348,7 @@ export class SugarDocument {
   }
 
   undo(): boolean {
+    this.dropSession();
     const prev = this.undoStack.pop();
     if (!prev) return false;
     this.redoStack.push({ features: this.features, params: this.params });
@@ -343,6 +359,7 @@ export class SugarDocument {
   }
 
   redo(): boolean {
+    this.dropSession();
     const next = this.redoStack.pop();
     if (!next) return false;
     this.undoStack.push({ features: this.features, params: this.params });
@@ -364,6 +381,7 @@ export class SugarDocument {
 
   load(file: SugarFile): void {
     if (file?.app !== "sugarCAD") throw new Error("Bu bir sugarCAD dosyası değil");
+    this.dropSession();
     if (!(file.version >= MIN_FILE_VERSION && file.version <= FILE_VERSION)) {
       throw new Error(`Desteklenmeyen dosya sürümü: ${file.version}`);
     }
