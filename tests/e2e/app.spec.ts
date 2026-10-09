@@ -124,15 +124,17 @@ test("XZ düzlemine tıklayıp çizgiyle üçgen çiz, döndür", async ({ page 
 
   await page.keyboard.press("Control+Enter");
   await page.getByRole("toolbar", { name: "Araçlar" }).getByRole("button", { name: "Döndürme" }).click();
+  await expect(page.getByRole("dialog", { name: "Döndürme" })).toBeVisible();
   // Pappus: alan (100) × 2π × ağırlık merkezi uzaklığı (25/3)
   await expect.poll(() => volumeOf(page, 1)).toBeCloseTo(100 * 2 * Math.PI * (25 / 3), -2);
   await page.screenshot({ path: `${S}/04-dondurme.png` });
 
   // Açı sınırı 360: büyük değer kırpılır ve alana yansır
-  const angle = page.getByLabel("Açı (°)");
+  const angle = page.getByRole("dialog", { name: "Döndürme" }).getByLabel("Açı (°)");
   await angle.fill("500");
   await angle.press("Enter");
-  await expect(angle).toHaveValue("360");
+  await expect(page.getByRole("dialog", { name: "Döndürme" })).toBeHidden();
+  await expect.poll(() => page.evaluate(() => (window as any).sugarcad.document.all()[1].params.angle)).toBe(360);
   expect(errors).toEqual([]);
 });
 
@@ -1529,5 +1531,77 @@ test("tarayıcı: klasör göz anahtarları, Orijin, Belge Ayarları ve adlandı
   await page.locator('.tree-folder[data-folder="origin"]').click();
   await expect(page.locator(".tree-plane").first()).toHaveAttribute("title", "Tıkla: bu düzlemde eskiz başlat");
   await page.screenshot({ path: info.outputPath("tarayici.png") });
+  expect(errors).toEqual([]);
+});
+
+test("Döndürme diyaloğu: canlı önizleme, İptal iz bırakmaz, Tamam tek geri alma adımı, açıkken geri al", async ({ page }) => {
+  const errors = await open(page);
+  const types = async () => (await features(page)).map((f: any) => f.type);
+  await page.keyboard.press("s");
+  await page.getByRole("button", { name: "XY (Üst)" }).click();
+  await page.keyboard.press("r");
+  await clickSketch(page, [10, 0]);
+  await clickSketch(page, [20, 10]);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Enter");
+  const dialog = page.getByRole("dialog", { name: "Döndürme" });
+  const volume = () => page.evaluate(() => {
+    const app = (window as any).sugarcad;
+    const f = app.document.all().find((x: any) => x.type === "revolve");
+    return f ? (app.meshes.get(f.id)?.volume ?? 0) : -1;
+  });
+  const full = Math.PI * (20 * 20 - 10 * 10) * 10;
+
+  // Aç: özellik hemen eklenir, 360° model hesaplanır; ikinci açış mevcut diyaloğa dokunmaz
+  await page.keyboard.press("Shift+R");
+  await expect(dialog).toBeVisible();
+  await page.getByRole("toolbar", { name: "Araçlar" }).getByRole("button", { name: "Döndürme" }).click();
+  await expect(dialog).toHaveCount(1);
+  expect(await types()).toEqual(["sketch", "revolve"]);
+  await expect.poll(volume).toBeCloseTo(full, -2);
+  await expect(page.locator("body[data-feature-dialog=revolve]")).toHaveCount(1);
+  // Eksen seçenekleri: V, U ve eskizdeki çizgiler
+  const options = await dialog.getByRole("combobox", { name: "Eksen" }).locator("option").count();
+  expect(options).toBeGreaterThanOrEqual(6);
+  // Açı 180: hacim yarıya iner
+  await dialog.getByRole("textbox", { name: "Açı (°)" }).fill("180");
+  await expect.poll(volume).toBeCloseTo(full / 2, -2);
+  await page.screenshot({ path: `${S}/17-dondurme-diyalogu.png` });
+  // İptal: iz kalmaz
+  await dialog.getByRole("button", { name: "İptal" }).click();
+  await expect(dialog).toBeHidden();
+  expect(await types()).toEqual(["sketch"]);
+  await expect(page.locator("body[data-feature-dialog]")).toHaveCount(0);
+
+  // Geçersiz açıyla Enter: diyalog açık kalır; geçerli açıyla Enter uygular
+  await page.keyboard.press("Shift+R");
+  const angle = dialog.getByRole("textbox", { name: "Açı (°)" });
+  await angle.fill("abc");
+  await angle.press("Enter");
+  await expect(page.locator(".toast.error")).toBeVisible();
+  await expect(dialog).toBeVisible();
+  await angle.fill("180");
+  await expect.poll(volume).toBeCloseTo(full / 2, -2);
+  await angle.press("Enter");
+  await expect(dialog).toBeHidden();
+  expect(await types()).toEqual(["sketch", "revolve"]);
+  // Tek geri alma: bütün düzenlemeler birlikte gider
+  await page.keyboard.press("Control+z");
+  await expect.poll(types).toEqual(["sketch"]);
+
+  // Esc (açılır kutuda da) iptal eder
+  await page.keyboard.press("Shift+R");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox", { name: "İşlem" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  expect(await types()).toEqual(["sketch"]);
+
+  // Açıkken geri al: diyalog kapanır, ilgisiz adım geri alınmaz
+  await page.keyboard.press("Shift+R");
+  await expect(dialog).toBeVisible();
+  await page.evaluate(() => (window as any).sugarcad.document.undo());
+  await expect(dialog).toBeHidden();
+  expect(await types()).toEqual(["sketch"]);
   expect(errors).toEqual([]);
 });

@@ -1856,7 +1856,7 @@ select:focus {
   grid-template-columns: 1fr 100px auto;
 }
 
-/* ---- Ekstrüzyon diyaloğu (Fusion'daki gibi sağda, canlı önizlemeli) ---- */
+/* ---- Ekstrüzyon / Döndürme diyaloğu (Fusion'daki gibi sağda, canlı önizlemeli) ---- */
 body[data-feature-dialog] [data-panel="properties"] {
   display: none;
 }

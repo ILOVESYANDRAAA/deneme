@@ -79,6 +79,8 @@ export class SugarApp implements HostServices {
   readonly onDidChangeTitle = new Emitter<string>();
   /** Arayüz, Ekstrüzyon komutunu diyalogla açmak için buraya kendini bağlar (yoksa özellik doğrudan eklenir). */
   openExtrudeDialog: (() => void) | null = null;
+  /** Arayüz, Döndürme komutunu diyalogla açmak için buraya kendini bağlar (yoksa özellik doğrudan eklenir). */
+  openRevolveDialog: (() => void) | null = null;
   /** Açık özellik diyaloğu varsa onaylar (yeni bir eskiz gibi belgeyi değiştiren bir komut başlarken çağrılır). */
   commitFeatureDialog: (() => void) | null = null;
 
@@ -727,9 +729,10 @@ function registerBuiltinCommands(app: SugarApp): void {
   });
   c.register({ id: "feature.loft", title: "Loft", category: "Katı" }, () => app.addLoftFeature());
   c.register({ id: "feature.sweep", title: "Süpürme", category: "Katı" }, () => app.addSweepFeature());
-  c.register({ id: "feature.revolve", title: "Döndürme", category: "Katı", keybinding: "Shift+R" }, () =>
-    app.addSketchFeature("revolve"),
-  );
+  c.register({ id: "feature.revolve", title: "Döndürme", category: "Katı", keybinding: "Shift+R" }, () => {
+    if (app.openRevolveDialog) app.openRevolveDialog();
+    else app.addSketchFeature("revolve");
+  });
   for (const type of BODY_FEATURES) {
     c.register({ id: `feature.${type}`, title: FEATURE_LABELS[type], category: "Katı" }, () => app.addBodyFeature(type));
   }
