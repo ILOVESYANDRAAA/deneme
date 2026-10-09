@@ -132,10 +132,14 @@ test("gövdeye sağ tık onu seçer; Gizle ve Sil çalışır (koyu tema)", asyn
   await page.evaluate(() => (window as any).sugarcad.document.setSelection([]));
   await page.evaluate(() => (window as any).sugarcad.commands.run("view.theme"));
 
-  const center = await page.evaluate(() => {
-    const ui = (window as any).sugarcadUi;
-    return ui.viewport.screenPosition((window as any).sugarcad.document.all()[1].id);
-  });
+  // Ağaç satırı, gövde ağı görünüme eklenmeden önce çıkabilir; konum gelene kadar bekle.
+  const bodyCenter = () =>
+    page.evaluate(() => {
+      const ui = (window as any).sugarcadUi;
+      return ui.viewport.screenPosition((window as any).sugarcad.document.all()[1].id) as { x: number; y: number } | null;
+    });
+  await expect.poll(bodyCenter).not.toBeNull();
+  const center = (await bodyCenter())!;
   await page.mouse.click(center.x, center.y, { button: "right" });
   await expect(menu(page)).toBeVisible();
   await expect(page.locator('.tree-row[aria-selected="true"]')).toHaveText("Ekstrüzyon 1");
