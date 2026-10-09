@@ -1864,6 +1864,7 @@ body[data-feature-dialog] [data-panel="properties"] {
 
 .btn.finish:hover {
   filter: brightness(1.08);
+}
 
 /* ---- işaretleme menüsü ---- */
 .mm {
