@@ -449,6 +449,8 @@ test("ölçü görünür: ölçü çizgisi ve oklar çizilir, önizleme imleçle
   // Etiketi tutup başka yere sürükle.
   await page.keyboard.press("Escape");
   const chip = page.locator(".sketch-notes .note.dim");
+  // boundingBox() beklemez; etiket çizilmeden ölçülürse null döner.
+  await expect(chip).toBeVisible();
   const box = (await chip.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
