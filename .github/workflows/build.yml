@@ -121,8 +121,8 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
           releaseId: ${{ needs.release-prep.outputs.release_id }}
-          includeUpdaterJson: true
-          updaterJsonPreferNsis: true
+          # latest.json'u platformlar paralel yazarsa birbirini siler; onu "publish" işi tek seferde üretir.
+          includeUpdaterJson: false
       - name: Derle (imzasız)
         if: needs.release-prep.outputs.publish != 'true'
         shell: bash
@@ -145,10 +145,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE: repos/${{ github.repository }}/releases/${{ needs.release-prep.outputs.release_id }}
     steps:
-      # Üç platform da yüklendikten sonra taslak yayına alınır; uygulamalar bu sürümü görür.
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v4
+      - name: Otomatik güncelleme dosyası (latest.json)
         run: |
-          gh api -X PATCH "repos/${{ github.repository }}/releases/${{ needs.release-prep.outputs.release_id }}" \
+          mkdir sigs
+          gh api "$RELEASE/assets" --paginate --jq '.[] | select(.name | endswith(".sig")) | "\(.id) \(.name)"' |
+            while read -r id name; do
+              gh api -H "Accept: application/octet-stream" "repos/${{ github.repository }}/releases/assets/$id" > "sigs/$name"
+            done
+          node scripts/updater-json.mjs sigs "${{ github.repository }}" "$APP_VERSION" latest.json
+          # Yeniden çalıştırmada eskisini kaldır
+          for id in $(gh api "$RELEASE/assets" --paginate --jq '.[] | select(.name == "latest.json") | .id'); do
+            gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$id"
+          done
+          gh api -X POST "https://uploads.github.com/$RELEASE/assets?name=latest.json" \
+            -H "Content-Type: application/json" --input latest.json --jq '.browser_download_url'
+      # Üç platform da yüklendikten sonra taslak yayına alınır; uygulamalar bu sürümü görür.
+      - name: Taslağı yayınla
+        run: |
+          gh api -X PATCH "$RELEASE" \
             -F draft=false -f make_latest=true --jq '.html_url'
